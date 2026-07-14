@@ -106,6 +106,11 @@ public final class TicTacToeGame implements BoardGame {
     }
 
     @Override
+    public synchronized String winner() {
+        return winner;
+    }
+
+    @Override
     public synchronized List<String> players() {
         return new ArrayList<>(playerList);
     }

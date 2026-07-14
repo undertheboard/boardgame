@@ -8,7 +8,8 @@ import java.util.Properties;
 
 public record ServerConfig(String host, int port, int discoveryPort, int minPlayers,
                            int maxPlayers, int startingHandSize, String adminPassword,
-                           String usersFile, int maxRooms) {
+                           String usersFile, int maxRooms, String statsFile,
+                           String pluginsDir) {
     public static ServerConfig load(Path override) throws IOException {
         Properties values = new Properties();
         try (InputStream defaults = ServerConfig.class.getResourceAsStream("/server.properties")) {
@@ -30,7 +31,9 @@ public record ServerConfig(String host, int port, int discoveryPort, int minPlay
                 integer(values, "startingHandSize", 1, 20),
                 values.getProperty("adminPassword", "admin"),
                 values.getProperty("usersFile", "users.properties"),
-                integer(values, "maxRooms", 1, 100));
+                integer(values, "maxRooms", 1, 100),
+                values.getProperty("statsFile", "stats.properties"),
+                values.getProperty("pluginsDir", "plugins"));
     }
 
     private static int integer(Properties values, String key, int min, int max) {
@@ -58,6 +61,9 @@ public record ServerConfig(String host, int port, int discoveryPort, int minPlay
         }
         if (maxRooms < 1) {
             throw new IllegalArgumentException("maxRooms must be at least 1");
+        }
+        if (statsFile == null || statsFile.isBlank()) {
+            throw new IllegalArgumentException("statsFile cannot be blank");
         }
     }
 }

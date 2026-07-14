@@ -1,18 +1,20 @@
-package com.boardgame.games.connectfour;
+package com.boardgame.games.gomoku;
 
 import com.boardgame.games.BoardGame;
 import com.boardgame.protocol.Protocol;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
-public final class ConnectFourGame implements BoardGame {
-    public static final int ROWS = 6;
-    public static final int COLS = 7;
+/**
+ * Gomoku (Five in a Row) on a 15x15 board. Black moves first; the first
+ * player to align five stones horizontally, vertically or diagonally wins.
+ * Moves are sent as {@code row,col} (zero-based).
+ */
+public final class GomokuGame implements BoardGame {
+    private static final int SIZE = 15;
 
-    private final char[][] grid = new char[ROWS][COLS];
+    private final char[][] board = new char[SIZE][SIZE];
     private final List<String> playerList = new ArrayList<>(2);
     private int currentIndex;
     private boolean started;
@@ -20,11 +22,9 @@ public final class ConnectFourGame implements BoardGame {
     private String winner;
     private String message = "Waiting for players";
 
-    public ConnectFourGame() {
-        for (int r = 0; r < ROWS; r++) {
-            for (int c = 0; c < COLS; c++) {
-                grid[r][c] = '.';
-            }
+    public GomokuGame() {
+        for (char[] row : board) {
+            java.util.Arrays.fill(row, '.');
         }
     }
 
@@ -39,7 +39,7 @@ public final class ConnectFourGame implements BoardGame {
         playerList.add(playerId);
         if (playerList.size() == 2) {
             started = true;
-            message = playerList.get(0) + "'s turn (R)";
+            message = playerList.get(0) + "'s turn (Black)";
         } else {
             message = playerId + " joined, waiting for opponent";
         }
@@ -56,17 +56,27 @@ public final class ConnectFourGame implements BoardGame {
     @Override
     public synchronized void move(String playerId, String moveData) {
         requireTurn(playerId);
-        int col = Integer.parseInt(moveData.trim());
-        if (col < 0 || col >= COLS) {
-            throw new IllegalArgumentException("Invalid column (0-6)");
+        String[] parts = moveData.trim().split(",");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Move must be row,col");
         }
-        int row = dropPiece(col);
-        if (row < 0) {
-            throw new IllegalArgumentException("Column is full");
+        int row;
+        int col;
+        try {
+            row = Integer.parseInt(parts[0].trim());
+            col = Integer.parseInt(parts[1].trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Move must be row,col");
         }
-        char piece = currentIndex == 0 ? 'R' : 'Y';
-        grid[row][col] = piece;
-        if (checkWin(row, col, piece)) {
+        if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) {
+            throw new IllegalArgumentException("Cell out of range (0-" + (SIZE - 1) + ")");
+        }
+        if (board[row][col] != '.') {
+            throw new IllegalArgumentException("Cell is occupied");
+        }
+        char stone = currentIndex == 0 ? 'b' : 'w';
+        board[row][col] = stone;
+        if (hasFive(row, col, stone)) {
             finished = true;
             winner = playerId;
             message = playerId + " wins!";
@@ -75,24 +85,24 @@ public final class ConnectFourGame implements BoardGame {
             message = "Draw!";
         } else {
             currentIndex = 1 - currentIndex;
-            message = playerList.get(currentIndex) + "'s turn (" + (currentIndex == 0 ? "R" : "Y") + ")";
+            message = playerList.get(currentIndex) + "'s turn ("
+                    + (currentIndex == 0 ? "Black" : "White") + ")";
         }
     }
 
     @Override
     public synchronized String snapshot(String playerId) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(started).append("|");
-        sb.append(finished).append("|");
-        sb.append(Protocol.encode(started ? playerList.get(currentIndex) : "")).append("|");
-        String boardStr = IntStream.range(0, ROWS)
-                .mapToObj(r -> new String(grid[r]))
-                .collect(Collectors.joining(","));
-        sb.append(boardStr).append("|");
-        String piece = playerList.indexOf(playerId) == 0 ? "R" : "Y";
-        sb.append(piece).append("|");
-        sb.append(Protocol.encode(message));
-        return sb.toString();
+        StringBuilder rows = new StringBuilder();
+        for (int r = 0; r < SIZE; r++) {
+            if (r > 0) {
+                rows.append(',');
+            }
+            rows.append(board[r]);
+        }
+        String myStone = playerList.indexOf(playerId) == 0 ? "b" : "w";
+        return started + "|" + finished + "|"
+                + Protocol.encode(started && !finished ? playerList.get(currentIndex) : "") + "|"
+                + rows + "|" + myStone + "|" + Protocol.encode(message);
     }
 
     @Override
@@ -127,7 +137,7 @@ public final class ConnectFourGame implements BoardGame {
 
     @Override
     public String gameType() {
-        return "CONNECTFOUR";
+        return "GOMOKU";
     }
 
     private void requireTurn(String playerId) {
@@ -139,31 +149,24 @@ public final class ConnectFourGame implements BoardGame {
         }
     }
 
-    private int dropPiece(int col) {
-        for (int r = ROWS - 1; r >= 0; r--) {
-            if (grid[r][col] == '.') {
-                return r;
-            }
-        }
-        return -1;
-    }
-
-    private boolean checkWin(int row, int col, char piece) {
+    private boolean hasFive(int row, int col, char stone) {
         int[][] directions = {{0, 1}, {1, 0}, {1, 1}, {1, -1}};
         for (int[] dir : directions) {
             int count = 1;
-            count += countDirection(row, col, dir[0], dir[1], piece);
-            count += countDirection(row, col, -dir[0], -dir[1], piece);
-            if (count >= 4) return true;
+            count += countRun(row, col, dir[0], dir[1], stone);
+            count += countRun(row, col, -dir[0], -dir[1], stone);
+            if (count >= 5) {
+                return true;
+            }
         }
         return false;
     }
 
-    private int countDirection(int row, int col, int dr, int dc, char piece) {
+    private int countRun(int row, int col, int dr, int dc, char stone) {
         int count = 0;
         int r = row + dr;
         int c = col + dc;
-        while (r >= 0 && r < ROWS && c >= 0 && c < COLS && grid[r][c] == piece) {
+        while (r >= 0 && r < SIZE && c >= 0 && c < SIZE && board[r][c] == stone) {
             count++;
             r += dr;
             c += dc;
@@ -172,17 +175,13 @@ public final class ConnectFourGame implements BoardGame {
     }
 
     private boolean isFull() {
-        for (int c = 0; c < COLS; c++) {
-            if (grid[0][c] == '.') return false;
+        for (char[] row : board) {
+            for (char c : row) {
+                if (c == '.') {
+                    return false;
+                }
+            }
         }
         return true;
-    }
-
-    public synchronized char[][] getGrid() {
-        char[][] copy = new char[ROWS][COLS];
-        for (int r = 0; r < ROWS; r++) {
-            System.arraycopy(grid[r], 0, copy[r], 0, COLS);
-        }
-        return copy;
     }
 }

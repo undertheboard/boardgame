@@ -6,7 +6,10 @@ import com.boardgame.protocol.Protocol;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListCellRenderer;
+import javax.swing.JLayeredPane;
+import javax.swing.JTextArea;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -21,6 +24,9 @@ import javax.swing.JTextField;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.SourceDataLine;
+import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
@@ -50,7 +56,9 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 public final class HubClient extends JFrame {
@@ -71,6 +79,22 @@ public final class HubClient extends JFrame {
 
     private final CardLayout cardLayout = new CardLayout();
     private final JPanel mainPanel = new JPanel(cardLayout);
+    /** Emote definitions: id -> {emoji, phrase, comma-separated tone frequencies}. */
+    private static final Map<String, String[]> EMOTE_DEFS = new LinkedHashMap<>();
+
+    static {
+        EMOTE_DEFS.put("WAVE", new String[]{"\uD83D\uDC4B", "waves hello", "660,880"});
+        EMOTE_DEFS.put("LAUGH", new String[]{"\uD83D\uDE02", "laughs out loud", "523,659,784"});
+        EMOTE_DEFS.put("CRY", new String[]{"\uD83D\uDE2D", "bursts into tears", "440,349"});
+        EMOTE_DEFS.put("ANGRY", new String[]{"\uD83D\uDE20", "is fuming!", "220,196"});
+        EMOTE_DEFS.put("SHOCK", new String[]{"\uD83D\uDE31", "is shocked!", "880,1046"});
+        EMOTE_DEFS.put("GG", new String[]{"\uD83E\uDD1D", "says: good game!", "523,784"});
+        EMOTE_DEFS.put("TAUNT", new String[]{"\uD83D\uDE1C",
+                "taunts: is that all you've got?", "784,659,784,659"});
+        EMOTE_DEFS.put("BOAST", new String[]{"\uD83D\uDE0E", "boasts: too easy!", "659,784,988"});
+        EMOTE_DEFS.put("HORN", new String[]{"\uD83D\uDCEF", "sounds the air horn!", "466,466,622"});
+    }
+
     private ServerConnection connection;
     private String username;
     private String role;
@@ -84,16 +108,23 @@ public final class HubClient extends JFrame {
     // Character screen
     private String selectedSymbol = "\u2605";
     private String selectedColor = "6C63FF";
+    private String selectedTitle = "";
+    private int myLevel = 1;
+    private JComboBox<String> titleBox;
     private JLabel charPreview;
 
     // Lobby screen
     private JPanel roomsPanel;
     private JPanel playersPanel;
     private JLabel lobbyStatus;
+    private JComboBox<String> gameTypeBox;
 
     // Game screen
     private JPanel gamePanel;
     private JLabel gameStatus;
+    private JTextArea chatArea;
+    private Timer waitingTimer;
+    private float waitingPhase;
 
     private HubClient(String host, int port) {
         super("Board Game Hub");
@@ -252,8 +283,23 @@ public final class HubClient extends JFrame {
         }
         center.add(colorGrid, gbc);
 
-        // Preview
+        // Title picker (character building)
         gbc.gridy = 2;
+        JPanel titleRow = darkPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
+        titleRow.add(styledLabel("Title:", FONT_BODY, TEXT_PRIMARY));
+        titleBox = styledComboBox(new String[]{"(no title)", "Novice", "Apprentice",
+                "Strategist", "Tactician", "Trickster", "Card Shark", "Grandmaster",
+                "Champion", "Legend"});
+        titleBox.addActionListener(e -> {
+            String value = (String) titleBox.getSelectedItem();
+            selectedTitle = "(no title)".equals(value) ? "" : value;
+            updateCharPreview();
+        });
+        titleRow.add(titleBox);
+        center.add(titleRow, gbc);
+
+        // Preview
+        gbc.gridy = 3;
         charPreview = new JLabel(selectedSymbol) {
             @Override
             protected void paintComponent(Graphics g) {
@@ -262,11 +308,18 @@ public final class HubClient extends JFrame {
                 g2.setColor(BG_CARD);
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), 20, 20);
                 g2.setColor(Color.decode("#" + selectedColor));
-                g2.setFont(new Font("SansSerif", Font.PLAIN, 64));
+                g2.setFont(new Font("SansSerif", Font.PLAIN, 56));
                 FontMetrics fm = g2.getFontMetrics();
                 int x = (getWidth() - fm.stringWidth(selectedSymbol)) / 2;
-                int y = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
+                int y = (getHeight() - 16 + fm.getAscent() - fm.getDescent()) / 2;
                 g2.drawString(selectedSymbol, x, y);
+                g2.setFont(FONT_BODY);
+                g2.setColor(TEXT_SECONDARY);
+                String caption = (selectedTitle.isEmpty() ? "" : selectedTitle + " \u2022 ")
+                        + "Lv " + myLevel;
+                FontMetrics fm2 = g2.getFontMetrics();
+                g2.drawString(caption, (getWidth() - fm2.stringWidth(caption)) / 2,
+                        getHeight() - 12);
                 g2.dispose();
             }
         };
@@ -292,8 +345,11 @@ public final class HubClient extends JFrame {
         lobbyStatus = styledLabel("Welcome!", FONT_BODY, TEXT_SECONDARY);
         JButton customizeBtn = accentButton("Customize");
         customizeBtn.addActionListener(e -> cardLayout.show(mainPanel, "character"));
+        JButton leaderboardBtn = accentButton("\uD83C\uDFC6 Leaderboard");
+        leaderboardBtn.addActionListener(e -> sendCommand("LEADERBOARD"));
         JPanel headerRight = darkPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0));
         headerRight.add(lobbyStatus);
+        headerRight.add(leaderboardBtn);
         headerRight.add(customizeBtn);
         JPanel header = darkPanel(new BorderLayout());
         header.add(title, BorderLayout.WEST);
@@ -333,8 +389,9 @@ public final class HubClient extends JFrame {
         gc.fill = GridBagConstraints.HORIZONTAL;
         gc.gridx = 0;
         gc.gridy = 0;
-        JComboBox<String> gameTypeBox = styledComboBox(new String[]{
-                "UNO", "TICTACTOE", "CONNECTFOUR", "CHECKERS", "REVERSI", "DOTSANDBOXES"});
+        gameTypeBox = styledComboBox(new String[]{
+                "UNO", "TICTACTOE", "CONNECTFOUR", "CHECKERS", "REVERSI", "DOTSANDBOXES",
+                "GOMOKU", "RPS"});
         createPanel.add(gameTypeBox, gc);
         gc.gridy = 1;
         JTextField roomNameField = styledTextField(12);
@@ -364,6 +421,10 @@ public final class HubClient extends JFrame {
         leaveBtn.addActionListener(e -> {
             sendCommand("LEAVEROOM");
             currentRoomId = null;
+            stopWaitingAnimation();
+            if (chatArea != null) {
+                chatArea.setText("");
+            }
             cardLayout.show(mainPanel, "lobby");
             sendCommand("LIST");
         });
@@ -375,7 +436,70 @@ public final class HubClient extends JFrame {
         gamePanel = darkPanel(new BorderLayout());
         panel.add(gamePanel, BorderLayout.CENTER);
 
+        panel.add(buildChatSidebar(), BorderLayout.EAST);
+
         return panel;
+    }
+
+    private JPanel buildChatSidebar() {
+        JPanel side = darkPanel(new BorderLayout(8, 8));
+        side.setPreferredSize(new Dimension(260, 0));
+
+        chatArea = new JTextArea();
+        chatArea.setEditable(false);
+        chatArea.setLineWrap(true);
+        chatArea.setWrapStyleWord(true);
+        chatArea.setBackground(BG_CARD);
+        chatArea.setForeground(TEXT_PRIMARY);
+        chatArea.setFont(FONT_BODY);
+        chatArea.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        JScrollPane chatScroll = new JScrollPane(chatArea);
+        chatScroll.setBackground(BG_DARK);
+        chatScroll.getViewport().setBackground(BG_CARD);
+        chatScroll.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(BG_INPUT), "Room Chat",
+                0, 0, FONT_BODY, TEXT_SECONDARY));
+        side.add(chatScroll, BorderLayout.CENTER);
+
+        JPanel bottom = darkPanel(new BorderLayout(4, 4));
+
+        // Emote / taunt buttons
+        JPanel emotes = darkPanel(new GridLayout(3, 3, 4, 4));
+        for (Map.Entry<String, String[]> entry : EMOTE_DEFS.entrySet()) {
+            String id = entry.getKey();
+            JButton btn = accentButton(entry.getValue()[0]);
+            btn.setToolTipText(id.charAt(0) + id.substring(1).toLowerCase());
+            btn.setPreferredSize(new Dimension(48, 32));
+            btn.addActionListener(e -> sendCommand("EMOTE|" + id));
+            emotes.add(btn);
+        }
+        bottom.add(emotes, BorderLayout.NORTH);
+
+        JTextField chatInput = styledTextField(12);
+        JButton sendBtn = accentButton("Send");
+        Runnable sendChat = () -> {
+            String text = chatInput.getText().trim();
+            if (!text.isEmpty()) {
+                sendCommand("CHAT|" + Protocol.encode(text));
+                chatInput.setText("");
+            }
+        };
+        chatInput.addActionListener(e -> sendChat.run());
+        sendBtn.addActionListener(e -> sendChat.run());
+        JPanel inputRow = darkPanel(new BorderLayout(4, 0));
+        inputRow.add(chatInput, BorderLayout.CENTER);
+        inputRow.add(sendBtn, BorderLayout.EAST);
+        bottom.add(inputRow, BorderLayout.SOUTH);
+
+        side.add(bottom, BorderLayout.SOUTH);
+        return side;
+    }
+
+    private void appendChat(String line) {
+        if (chatArea != null) {
+            chatArea.append(line + "\n");
+            chatArea.setCaretPosition(chatArea.getDocument().getLength());
+        }
     }
 
     // --- Network ---
@@ -411,6 +535,18 @@ public final class HubClient extends JFrame {
                 role = Protocol.decode(parts[2]);
                 selectedSymbol = Protocol.decode(parts[3]);
                 selectedColor = parts[4];
+                if (parts.length > 6) {
+                    selectedTitle = Protocol.decode(parts[5]);
+                    try {
+                        myLevel = Integer.parseInt(parts[6]);
+                    } catch (NumberFormatException ignored) {
+                        myLevel = 1;
+                    }
+                    if (titleBox != null) {
+                        titleBox.setSelectedItem(selectedTitle.isEmpty()
+                                ? "(no title)" : selectedTitle);
+                    }
+                }
                 updateCharPreview();
                 cardLayout.show(mainPanel, "character");
                 sendCommand("LIST");
@@ -437,8 +573,136 @@ public final class HubClient extends JFrame {
                 gameStatus.setText(msg);
             }
             case "LOBBY" -> renderLobby(parts);
+            case "ROOMCLOSED" -> {
+                currentRoomId = null;
+                stopWaitingAnimation();
+                if (chatArea != null) {
+                    chatArea.setText("");
+                }
+                lobbyStatus.setText(parts.length > 1 ? Protocol.decode(parts[1]) : "Room closed");
+                cardLayout.show(mainPanel, "lobby");
+                sendCommand("LIST");
+            }
             case "GAMESTATE" -> renderGame(parts);
+            case "GAMES" -> {
+                if (parts.length > 1 && !parts[1].isEmpty() && gameTypeBox != null) {
+                    gameTypeBox.setModel(new DefaultComboBoxModel<>(parts[1].split(",")));
+                }
+            }
+            case "CHAT" -> appendChat(Protocol.decode(parts[1]) + ": " + Protocol.decode(parts[2]));
+            case "EMOTE" -> showEmote(Protocol.decode(parts[1]), parts[2]);
+            case "LEADERBOARD" -> showLeaderboard(parts.length > 1 ? parts[1] : "");
         }
+    }
+
+    private void showLeaderboard(String data) {
+        StringBuilder sb = new StringBuilder(String.format("%-4s %-20s %5s %5s %5s %5s%n",
+                "#", "Player", "W", "L", "D", "Lv"));
+        int rank = 1;
+        if (!data.isEmpty()) {
+            for (String entry : data.split(",")) {
+                String[] f = entry.split(":", 5);
+                if (f.length == 5) {
+                    sb.append(String.format("%-4d %-20s %5s %5s %5s %5s%n",
+                            rank++, Protocol.decode(f[0]), f[1], f[2], f[3], f[4]));
+                }
+            }
+        }
+        if (rank == 1) {
+            sb.append("No games played yet. Go make history!");
+        }
+        JTextArea area = new JTextArea(sb.toString());
+        area.setEditable(false);
+        area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
+        area.setBackground(BG_CARD);
+        area.setForeground(TEXT_PRIMARY);
+        JScrollPane scroll = new JScrollPane(area);
+        scroll.setPreferredSize(new Dimension(440, 320));
+        JOptionPane.showMessageDialog(this, scroll, "\uD83C\uDFC6 Leaderboard",
+                JOptionPane.PLAIN_MESSAGE);
+    }
+
+    // --- Emotes, noises and animations ---
+
+    private void showEmote(String user, String emoteId) {
+        String[] def = EMOTE_DEFS.get(emoteId);
+        if (def == null) {
+            return;
+        }
+        appendChat(def[0] + " " + user + " " + def[1]);
+        playNoise(def[2]);
+        animateToast(def[0] + " " + user + " " + def[1]);
+    }
+
+    /** Plays a short sequence of sine-wave beeps; silently no-ops without audio. */
+    private static void playNoise(String frequencies) {
+        Thread thread = new Thread(() -> {
+            try {
+                AudioFormat format = new AudioFormat(22050f, 8, 1, true, false);
+                try (SourceDataLine line = javax.sound.sampled.AudioSystem
+                        .getSourceDataLine(format)) {
+                    line.open(format);
+                    line.start();
+                    for (String freq : frequencies.split(",")) {
+                        double f = Double.parseDouble(freq);
+                        byte[] buffer = new byte[2205]; // 100 ms per tone
+                        for (int i = 0; i < buffer.length; i++) {
+                            double envelope = 1.0 - (double) i / buffer.length;
+                            buffer[i] = (byte) (Math.sin(2 * Math.PI * f * i / 22050) * 70 * envelope);
+                        }
+                        line.write(buffer, 0, buffer.length);
+                    }
+                    line.drain();
+                }
+            } catch (Exception ignored) {
+                // No audio device (e.g. headless) — emotes stay visual only
+            }
+        }, "emote-noise");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /** Slides an emote toast up from the bottom of the window while fading it out. */
+    private void animateToast(String text) {
+        JLayeredPane layers = getLayeredPane();
+        JLabel toast = new JLabel(text, SwingConstants.CENTER) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                float alpha = Math.max(0f, Math.min(1f, ((Number) getClientProperty("alpha")).floatValue()));
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+                g2.setColor(ACCENT);
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 20, 20);
+                g2.setColor(Color.WHITE);
+                g2.setFont(FONT_BUTTON);
+                FontMetrics fm = g2.getFontMetrics();
+                g2.drawString(getText(), (getWidth() - fm.stringWidth(getText())) / 2,
+                        (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
+                g2.dispose();
+            }
+        };
+        toast.putClientProperty("alpha", 1f);
+        int width = Math.max(220, toast.getFontMetrics(FONT_BUTTON).stringWidth(text) + 48);
+        int startY = getHeight() - 90;
+        toast.setBounds((getWidth() - width) / 2, startY, width, 44);
+        toast.setOpaque(false);
+        layers.add(toast, JLayeredPane.POPUP_LAYER);
+        Timer timer = new Timer(30, null);
+        long start = System.currentTimeMillis();
+        timer.addActionListener(e -> {
+            float progress = (System.currentTimeMillis() - start) / 1800f;
+            if (progress >= 1f) {
+                timer.stop();
+                layers.remove(toast);
+                layers.repaint();
+                return;
+            }
+            toast.putClientProperty("alpha", 1f - progress);
+            toast.setLocation(toast.getX(), startY - (int) (progress * 60));
+            toast.repaint();
+        });
+        timer.start();
     }
 
     private void renderLobby(String[] parts) {
@@ -502,13 +766,18 @@ public final class HubClient extends JFrame {
         playersPanel.removeAll();
         if (!onlineData.isEmpty()) {
             for (String entry : onlineData.split(",")) {
-                String[] fields = entry.split(":", 3);
+                String[] fields = entry.split(":", 5);
                 if (fields.length >= 3) {
                     String name = Protocol.decode(fields[0]);
                     String sym = Protocol.decode(fields[1]);
                     String col = fields[2];
-                    JLabel lbl = styledLabel(sym + " " + name, FONT_BODY,
-                            Color.decode("#" + col));
+                    String text = sym + " " + name;
+                    if (fields.length >= 5) {
+                        String userTitle = Protocol.decode(fields[3]);
+                        text += (userTitle.isEmpty() ? "" : " \u201C" + userTitle + "\u201D")
+                                + "  Lv " + fields[4];
+                    }
+                    JLabel lbl = styledLabel(text, FONT_BODY, Color.decode("#" + col));
                     playersPanel.add(lbl);
                 }
             }
@@ -518,8 +787,10 @@ public final class HubClient extends JFrame {
     }
 
     private void renderGame(String[] parts) {
-        // parts[0]="GAMESTATE", rest is game-specific snapshot
-        String snapshotData = String.join("|", java.util.Arrays.copyOfRange(parts, 1, parts.length));
+        // parts[0]="GAMESTATE", parts[1]=gameType, rest is game-specific snapshot
+        if (parts.length < 3) return;
+        String gameType = parts[1];
+        String snapshotData = String.join("|", java.util.Arrays.copyOfRange(parts, 2, parts.length));
         String[] fields = snapshotData.split("\\|", -1);
         if (fields.length < 3) return;
 
@@ -529,8 +800,16 @@ public final class HubClient extends JFrame {
         String statusText = fields.length > 3 ? Protocol.decode(fields[fields.length - 1]) : "";
         gameStatus.setText(statusText);
 
+        stopWaitingAnimation();
         gamePanel.removeAll();
-        // Simple text-based game rendering with styled components
+
+        if (!started) {
+            gamePanel.add(buildWaitingPanel(statusText), BorderLayout.CENTER);
+            gamePanel.revalidate();
+            gamePanel.repaint();
+            return;
+        }
+
         JPanel board = new JPanel(new GridBagLayout()) {
             @Override
             protected void paintComponent(Graphics g) {
@@ -546,28 +825,73 @@ public final class HubClient extends JFrame {
 
         boolean myTurn = started && !finished && username.equals(currentPlayer);
 
-        // Determine game type from snapshot structure and render
-        if (fields.length >= 7 && fields[3].length() == 9 && fields[3].matches("[XO.]{9}")) {
-            renderTicTacToe(board, fields, myTurn);
-        } else if (fields.length >= 6 && fields[3].contains(",") && fields[3].split(",").length == 6) {
-            renderConnectFour(board, fields, myTurn);
-        } else if (fields.length >= 6 && fields[3].contains(",") && fields[3].split(",").length == 8
-                && fields[3].split(",")[0].length() == 8 && fields[3].contains("b")) {
-            renderCheckers(board, fields, myTurn);
-        } else if (fields.length >= 6 && fields[3].contains(",") && fields[3].split(",").length == 8
-                && fields[3].split(",")[0].length() == 8) {
-            renderReversi(board, fields, myTurn);
-        } else if (fields.length >= 9) {
-            // UNO game
-            renderUno(board, fields, myTurn);
-        } else {
-            // Generic/DotsAndBoxes - show raw data
-            renderGeneric(board, fields, myTurn);
+        switch (gameType) {
+            case "TICTACTOE" -> renderTicTacToe(board, fields, myTurn);
+            case "CONNECTFOUR" -> renderConnectFour(board, fields, myTurn);
+            case "CHECKERS" -> renderCheckers(board, fields, myTurn);
+            case "REVERSI" -> renderReversi(board, fields, myTurn);
+            case "GOMOKU" -> renderGomoku(board, fields, myTurn);
+            case "RPS" -> renderRps(board, fields, myTurn);
+            case "UNO" -> renderUno(board, fields, myTurn);
+            default -> renderGeneric(board, fields, myTurn);
         }
 
         gamePanel.add(board, BorderLayout.CENTER);
+        if (finished) {
+            JButton againBtn = accentButton("\uD83D\uDD01 Play Again");
+            againBtn.addActionListener(e -> sendCommand("PLAYAGAIN"));
+            JPanel againRow = darkPanel(new FlowLayout(FlowLayout.CENTER, 8, 8));
+            againRow.add(againBtn);
+            againRow.add(styledLabel("or leave the room \u2014 it closes automatically after a while",
+                    FONT_BODY, TEXT_SECONDARY));
+            gamePanel.add(againRow, BorderLayout.SOUTH);
+        }
         gamePanel.revalidate();
         gamePanel.repaint();
+    }
+
+    /** Full-panel "waiting for players" screen with a gently pulsing hourglass. */
+    private JPanel buildWaitingPanel(String statusText) {
+        JPanel waiting = darkPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(8, 8, 8, 8);
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        JLabel hourglass = new JLabel("\u23F3", SwingConstants.CENTER) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                float alpha = 0.55f + 0.45f * (float) Math.abs(Math.sin(waitingPhase));
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+                super.paintComponent(g2);
+                g2.dispose();
+            }
+        };
+        hourglass.setFont(new Font("SansSerif", Font.PLAIN, 72));
+        hourglass.setForeground(ACCENT);
+        waiting.add(hourglass, gbc);
+
+        gbc.gridy = 1;
+        waiting.add(styledLabel("Waiting for players\u2026", FONT_HEADER, TEXT_PRIMARY), gbc);
+        gbc.gridy = 2;
+        waiting.add(styledLabel(statusText, FONT_BODY, TEXT_SECONDARY), gbc);
+        gbc.gridy = 3;
+        waiting.add(styledLabel("Say hi in the chat while you wait!", FONT_BODY, TEXT_SECONDARY), gbc);
+
+        waitingTimer = new Timer(80, e -> {
+            waitingPhase += 0.15f;
+            hourglass.repaint();
+        });
+        waitingTimer.start();
+        return waiting;
+    }
+
+    private void stopWaitingAnimation() {
+        if (waitingTimer != null) {
+            waitingTimer.stop();
+            waitingTimer = null;
+        }
     }
 
     private void renderTicTacToe(JPanel board, String[] fields, boolean myTurn) {
@@ -658,9 +982,55 @@ public final class HubClient extends JFrame {
         renderGridGame(board, fields, myTurn, 8, "REVERSI");
     }
 
+    private void renderGomoku(JPanel board, String[] fields, boolean myTurn) {
+        renderGridGame(board, fields, myTurn, 15, "GOMOKU");
+    }
+
+    private void renderRps(JPanel board, String[] fields, boolean myTurn) {
+        // fields: started|finished|pendingPlayer|scores|round|myChoice|message
+        String scores = fields[3];
+        String round = fields.length > 4 ? fields[4] : "";
+        String myChoice = fields.length > 5 ? fields[5] : "";
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(12, 12, 12, 12);
+        gbc.gridy = 0;
+        gbc.gridx = 0;
+        gbc.gridwidth = 3;
+        StringBuilder scoreText = new StringBuilder("Round " + round + "   ");
+        for (String entry : scores.split(",")) {
+            String[] kv = entry.split(":", 2);
+            if (kv.length == 2) {
+                scoreText.append(Protocol.decode(kv[0])).append(": ").append(kv[1]).append("   ");
+            }
+        }
+        board.add(styledLabel(scoreText.toString().trim(), FONT_HEADER, TEXT_PRIMARY), gbc);
+
+        gbc.gridy = 1;
+        gbc.gridwidth = 1;
+        String[][] options = {{"ROCK", "\u270A"}, {"PAPER", "\u270B"}, {"SCISSORS", "\u270C"}};
+        for (int i = 0; i < options.length; i++) {
+            String choice = options[i][0];
+            JButton btn = accentButton(options[i][1] + " " + choice);
+            btn.setPreferredSize(new Dimension(160, 60));
+            btn.setEnabled(myTurn);
+            btn.addActionListener(e -> sendCommand("MOVE|" + choice));
+            gbc.gridx = i;
+            board.add(btn, gbc);
+        }
+
+        gbc.gridy = 2;
+        gbc.gridx = 0;
+        gbc.gridwidth = 3;
+        String hint = !myChoice.isEmpty() ? "You chose " + myChoice + " — waiting for opponent\u2026"
+                : myTurn ? "Make your choice!" : "";
+        board.add(styledLabel(hint, FONT_BODY, TEXT_SECONDARY), gbc);
+    }
+
     private void renderGridGame(JPanel board, String[] fields, boolean myTurn, int size, String type) {
         String[] rows = fields[3].split(",");
         String myPiece = fields[4];
+        int cellSize = size > 10 ? 32 : 48;
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(1, 1, 1, 1);
         for (int r = 0; r < size; r++) {
@@ -675,6 +1045,8 @@ public final class HubClient extends JFrame {
                         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                         if (type.equals("CHECKERS")) {
                             g2.setColor((row + col) % 2 == 0 ? new Color(0xD4, 0xA0, 0x60) : new Color(0x5C, 0x3A, 0x21));
+                        } else if (type.equals("GOMOKU")) {
+                            g2.setColor(new Color(0xC8, 0x9B, 0x5C));
                         } else {
                             g2.setColor(new Color(0x1B, 0x5E, 0x20));
                         }
@@ -694,7 +1066,7 @@ public final class HubClient extends JFrame {
                         g2.dispose();
                     }
                 };
-                cell.setPreferredSize(new Dimension(48, 48));
+                cell.setPreferredSize(new Dimension(cellSize, cellSize));
                 cell.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
                 cell.addMouseListener(new MouseAdapter() {
                     @Override
@@ -714,7 +1086,7 @@ public final class HubClient extends JFrame {
     private int selectedFromRow = -1, selectedFromCol = -1;
 
     private void handleGridClick(int row, int col, String type) {
-        if (type.equals("REVERSI")) {
+        if (type.equals("REVERSI") || type.equals("GOMOKU")) {
             sendCommand("MOVE|" + row + "," + col);
         } else if (type.equals("CHECKERS")) {
             if (selectedFromRow < 0) {
@@ -916,7 +1288,8 @@ public final class HubClient extends JFrame {
     }
 
     private void doSaveCharacter() {
-        sendCommand("CHARACTER|" + selectedSymbol + "|" + selectedColor);
+        sendCommand("CHARACTER|" + selectedSymbol + "|" + selectedColor
+                + "|" + Protocol.encode(selectedTitle));
     }
 
     private void updateCharPreview() {

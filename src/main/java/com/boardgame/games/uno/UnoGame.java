@@ -32,6 +32,7 @@ public final class UnoGame implements BoardGame {
     private Color activeColor;
     private boolean started;
     private boolean finished;
+    private String winner;
     private String message = "Waiting for players";
 
     public UnoGame(int minPlayers, int maxPlayers, int startingHandSize, Random random) {
@@ -129,6 +130,11 @@ public final class UnoGame implements BoardGame {
     }
 
     @Override
+    public synchronized String winner() {
+        return winner;
+    }
+
+    @Override
     public synchronized List<String> players() {
         return new ArrayList<>(hands.keySet());
     }
@@ -165,6 +171,7 @@ public final class UnoGame implements BoardGame {
         activeColor = card.color() == Color.WILD ? chosenColor : card.color();
         if (hand.isEmpty()) {
             finished = true;
+            winner = playerId;
             message = playerId + " wins!";
             return;
         }
