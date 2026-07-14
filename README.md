@@ -14,7 +14,7 @@ A multiplayer board game platform with LAN discovery, user authentication, a lob
 | **Dots and Boxes** | 2–4 | 5×5 dot grid, complete boxes to score, extra turn on completion |
 | **Gomoku** | 2 | 15×15 board, first to five stones in a row wins |
 | **Rock Paper Scissors** | 2 | Simultaneous picks, first to three round wins |
-| **Putt Putt** | 2–4 | Animated mini golf — angle & power shots, wall bounces, fewest strokes wins |
+| **Putt Putt** | 2–4 | Nine-hole animated mini golf — aim & power-bar shots, wall bounces, collectible power-ups, configurable difficulty/course size, fewest total strokes wins |
 
 More games can be added without touching this codebase — see [docs/PLUGIN_API.md](docs/PLUGIN_API.md).
 

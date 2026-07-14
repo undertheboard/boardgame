@@ -22,6 +22,7 @@ import javax.swing.SpinnerNumberModel;
 import javax.swing.JSpinner;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
+import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.SwingConstants;
@@ -414,8 +415,12 @@ public final class HubClient extends JFrame {
             String name = roomNameField.getText().trim();
             if (!name.isEmpty()) {
                 String type = String.valueOf(gameTypeBox.getSelectedItem());
-                String options = "UNO".equals(type) ? promptUnoRules() : null;
-                if ("UNO".equals(type) && options == null) {
+                String options = switch (type) {
+                    case "UNO" -> promptUnoRules();
+                    case "PUTTPUTT" -> promptPuttPuttRules();
+                    default -> null;
+                };
+                if (("UNO".equals(type) || "PUTTPUTT".equals(type)) && options == null) {
                     return; // dialog cancelled
                 }
                 String cmd = "CREATE|" + type + "|" + Protocol.encode(name);
@@ -892,10 +897,11 @@ public final class HubClient extends JFrame {
             againBtn.addActionListener(e -> sendCommand("PLAYAGAIN"));
             JPanel againRow = darkPanel(new FlowLayout(FlowLayout.CENTER, 8, 8));
             againRow.add(againBtn);
-            if ("UNO".equals(gameType)) {
+            if ("UNO".equals(gameType) || "PUTTPUTT".equals(gameType)) {
                 JButton rulesBtn = accentButton("\uD83D\uDD01 Play Again (change rules)");
                 rulesBtn.addActionListener(e -> {
-                    String options = promptUnoRules();
+                    String options = "UNO".equals(gameType) ? promptUnoRules()
+                            : promptPuttPuttRules();
                     if (options != null) {
                         sendCommand("PLAYAGAIN|" + Protocol.encode(options));
                     }
@@ -1120,8 +1126,18 @@ public final class HubClient extends JFrame {
                     Pick Rock, Paper or Scissors each round.
                     Rock beats Scissors, Scissors beats Paper, Paper beats Rock.""";
             case "PUTTPUTT" -> """
-                    Aim and set the power, then take your shot.
-                    Bounce off walls and sink the ball in the fewest strokes.""";
+                    Play a round of mini golf (nine holes by default).
+                    \u2022 Aim: click or drag on the green \u2014 the dashed line shows
+                      your shot direction. Fine-tune with the \u21BA / \u21BB buttons.
+                    \u2022 Power: the power bar sweeps up and down; press Putt! to
+                      lock it in and take the shot.
+                    \u2022 Power-ups on the course are collected by rolling over them:
+                      B = power boost (you), M = bigger cup (you),
+                      S = sand trap (rivals), W = wobbly aim (rivals).
+                    \u2022 Sink everyone's ball to move to the next hole.
+                    Fewest total strokes after the last hole wins!
+                    Course difficulty, size, hole count and power-ups are chosen
+                    when the room is created.""";
             default -> "Take turns making moves. The status bar at the top tells\n"
                     + "you whose turn it is and what happened last.";
         };
@@ -1233,12 +1249,19 @@ public final class HubClient extends JFrame {
         renderGridGame(board, fields, myTurn, 15, "GOMOKU");
     }
 
+    /** Aim direction in degrees (0 = right, CCW positive), kept across snapshots. */
+    private double puttAimAngle;
+    /** Drives the oscillating putt power bar. */
+    private Timer puttPowerTimer;
+
     /**
-     * Renders the Putt Putt course with an animated shot. The server sends the
-     * sampled path of the most recent shot; the shooter's ball rolls along it.
+     * Renders the Putt Putt course with an animated shot. Aim by clicking or
+     * dragging on the green (fine-tune with the arrow buttons), then press
+     * Putt! to lock the oscillating power bar and take the shot.
      */
     private void renderPuttPutt(JPanel board, String[] fields, boolean myTurn) {
-        // fields: started|finished|current|w,h|hx,hy,hr|walls|balls|shooter|path|message
+        // fields: started|finished|current|w,h|hx,hy,hr|walls|balls|shooter|path|
+        //         holeNum/holes|powerups|effects|message
         String[] dims = fields[3].split(",");
         double courseW = Double.parseDouble(dims[0]);
         double courseH = Double.parseDouble(dims[1]);
@@ -1250,6 +1273,9 @@ public final class HubClient extends JFrame {
         String ballsStr = fields[6];
         String shooter = Protocol.decode(fields[7]);
         String pathStr = fields.length > 9 ? fields[8] : "";
+        String holeInfo = fields.length > 10 ? fields[9] : "";
+        String powerUpsStr = fields.length > 11 ? fields[10] : "";
+        String effectsStr = fields.length > 12 ? fields[11] : "";
 
         java.util.List<double[]> path = new java.util.ArrayList<>();
         if (!pathStr.isEmpty()) {
@@ -1264,8 +1290,31 @@ public final class HubClient extends JFrame {
                 ballRows.add(entry.split(":"));
             }
         }
+        java.util.List<String[]> powerUps = new java.util.ArrayList<>();
+        if (!powerUpsStr.isEmpty()) {
+            for (String entry : powerUpsStr.split(";")) {
+                powerUps.add(entry.split(":"));
+            }
+        }
+        java.util.Map<String, String> effects = new java.util.HashMap<>();
+        if (!effectsStr.isEmpty()) {
+            for (String entry : effectsStr.split(",")) {
+                String[] kv = entry.split(":");
+                if (kv.length == 2) {
+                    effects.put(Protocol.decode(kv[0]), kv[1]);
+                }
+            }
+        }
         Color[] ballColors = {Color.WHITE, new Color(0x4F, 0xC3, 0xF7),
                 new Color(0xFF, 0xD5, 0x4F), new Color(0xFF, 0x6B, 0x6B)};
+
+        double[] myBall = null;
+        for (String[] row : ballRows) {
+            if (Protocol.decode(row[0]).equals(username)) {
+                myBall = new double[]{Double.parseDouble(row[1]), Double.parseDouble(row[2])};
+            }
+        }
+        final double[] myBallPos = myBall;
 
         final int[] animIndex = {path.size() - 1};
         JPanel course = new JPanel() {
@@ -1294,6 +1343,21 @@ public final class HubClient extends JFrame {
                                 (int) (Double.parseDouble(r[2]) * sx),
                                 (int) (Double.parseDouble(r[3]) * sy));
                     }
+                }
+                // Power-ups
+                for (String[] powerUp : powerUps) {
+                    double px = Double.parseDouble(powerUp[1]) * sx;
+                    double py = Double.parseDouble(powerUp[2]) * sy;
+                    int pr = Math.max(6, (int) (2.0 * sx));
+                    g2.setColor(puttPowerUpColor(powerUp[0]));
+                    g2.fillOval((int) px - pr, (int) py - pr, pr * 2, pr * 2);
+                    g2.setColor(Color.WHITE);
+                    g2.drawOval((int) px - pr, (int) py - pr, pr * 2, pr * 2);
+                    g2.setFont(new Font("SansSerif", Font.BOLD, Math.max(9, pr)));
+                    FontMetrics fm = g2.getFontMetrics();
+                    String letter = powerUp[0].substring(0, 1);
+                    g2.drawString(letter, (int) px - fm.stringWidth(letter) / 2,
+                            (int) py + fm.getAscent() / 2 - 1);
                 }
                 // Hole
                 int hr = (int) (holeR * sx);
@@ -1331,11 +1395,51 @@ public final class HubClient extends JFrame {
                     }
                     ballIndex++;
                 }
+                // Aim indicator: dashed line from my ball in the aim direction
+                if (myTurn && myBallPos != null) {
+                    double rad = Math.toRadians(puttAimAngle);
+                    int ax = (int) (myBallPos[0] * sx);
+                    int ay = (int) (myBallPos[1] * sy);
+                    int ex = ax + (int) (Math.cos(rad) * 60);
+                    int ey = ay - (int) (Math.sin(rad) * 60);
+                    g2.setColor(new Color(255, 255, 255, 200));
+                    g2.setStroke(new BasicStroke(2, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+                            0, new float[]{6, 6}, 0));
+                    g2.drawLine(ax, ay, ex, ey);
+                    g2.fillOval(ex - 4, ey - 4, 8, 8);
+                }
                 g2.dispose();
             }
         };
         course.setOpaque(false);
         course.setPreferredSize(new Dimension(640, 384));
+        if (myTurn && myBallPos != null) {
+            course.setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
+            java.awt.event.MouseAdapter aimer = new java.awt.event.MouseAdapter() {
+                private void aim(java.awt.event.MouseEvent e) {
+                    double sx = course.getWidth() / courseW;
+                    double sy = course.getHeight() / courseH;
+                    double dx = e.getX() / sx - myBallPos[0];
+                    double dy = e.getY() / sy - myBallPos[1];
+                    if (dx != 0 || dy != 0) {
+                        puttAimAngle = Math.toDegrees(Math.atan2(-dy, dx));
+                        course.repaint();
+                    }
+                }
+
+                @Override
+                public void mousePressed(java.awt.event.MouseEvent e) {
+                    aim(e);
+                }
+
+                @Override
+                public void mouseDragged(java.awt.event.MouseEvent e) {
+                    aim(e);
+                }
+            };
+            course.addMouseListener(aimer);
+            course.addMouseMotionListener(aimer);
+        }
         if (path.size() > 1) {
             animIndex[0] = 0;
             Timer rollTimer = new Timer(25, null);
@@ -1356,36 +1460,114 @@ public final class HubClient extends JFrame {
         gbc.gridwidth = 6;
         board.add(course, gbc);
 
-        // Scorecard
+        // Scorecard with hole progress and pending effects
         gbc.gridy = 1;
-        StringBuilder score = new StringBuilder("<html>");
+        StringBuilder score = new StringBuilder("<html>\u26F3 Hole " + holeInfo
+                + "&nbsp;&nbsp;&nbsp;");
         for (String[] row : ballRows) {
-            score.append(Protocol.decode(row[0])).append(": ").append(row[3])
-                    .append(Boolean.parseBoolean(row[4]) ? " \u26F3" : "").append("&nbsp;&nbsp;&nbsp;");
+            String name = Protocol.decode(row[0]);
+            score.append(name).append(": ").append(row[3]);
+            if (row.length > 5) {
+                score.append(" (").append(row[5]).append(" this hole)");
+            }
+            score.append(Boolean.parseBoolean(row[4]) ? " \u26F3" : "");
+            String effect = effects.get(name);
+            if (effect != null) {
+                score.append(" \u2728").append(effect);
+            }
+            score.append("&nbsp;&nbsp;&nbsp;");
         }
         score.append("</html>");
         board.add(styledLabel(score.toString(), FONT_BODY, TEXT_SECONDARY), gbc);
 
-        // Shot controls
         gbc.gridy = 2;
+        board.add(styledLabel("Power-ups: B power boost \u00B7 M bigger cup \u00B7 "
+                        + "S sands your rivals \u00B7 W wobbles their aim",
+                FONT_SMALL, TEXT_SECONDARY), gbc);
+
+        // Shot controls: aim adjustment + oscillating power bar
+        if (puttPowerTimer != null) {
+            puttPowerTimer.stop();
+            puttPowerTimer = null;
+        }
+        gbc.gridy = 3;
         gbc.gridwidth = 1;
-        board.add(styledLabel("Angle\u00B0", FONT_BODY, TEXT_SECONDARY), gbc);
+        JButton aimLeft = accentButton("\u21BA");
+        aimLeft.setToolTipText("Rotate aim counter-clockwise");
+        aimLeft.setPreferredSize(new Dimension(48, 32));
+        aimLeft.setEnabled(myTurn);
+        JButton aimRight = accentButton("\u21BB");
+        aimRight.setToolTipText("Rotate aim clockwise");
+        aimRight.setPreferredSize(new Dimension(48, 32));
+        aimRight.setEnabled(myTurn);
+        aimLeft.addActionListener(e -> {
+            puttAimAngle += 3;
+            course.repaint();
+        });
+        aimRight.addActionListener(e -> {
+            puttAimAngle -= 3;
+            course.repaint();
+        });
+        gbc.gridx = 0;
+        board.add(aimLeft, gbc);
         gbc.gridx = 1;
-        JSpinner angle = new JSpinner(new SpinnerNumberModel(0, -180, 360, 5));
-        board.add(angle, gbc);
+        board.add(aimRight, gbc);
+
+        JProgressBar powerBar = new JProgressBar(1, 100);
+        powerBar.setValue(50);
+        powerBar.setStringPainted(true);
+        powerBar.setString("Power");
+        powerBar.setPreferredSize(new Dimension(220, 28));
+        powerBar.setForeground(ACCENT);
+        powerBar.setBackground(BG_INPUT);
         gbc.gridx = 2;
-        board.add(styledLabel("Power", FONT_BODY, TEXT_SECONDARY), gbc);
-        gbc.gridx = 3;
-        JSpinner power = new JSpinner(new SpinnerNumberModel(50, 1, 100, 5));
-        board.add(power, gbc);
-        gbc.gridx = 4;
+        gbc.gridwidth = 2;
+        board.add(powerBar, gbc);
+
         JButton puttBtn = accentButton("\u26F3 Putt!");
         puttBtn.setEnabled(myTurn);
-        puttBtn.addActionListener(e ->
-                sendCommand("MOVE|SHOT|" + angle.getValue() + "|" + power.getValue()));
+        gbc.gridx = 4;
+        gbc.gridwidth = 1;
         board.add(puttBtn, gbc);
         gbc.gridx = 5;
-        board.add(styledLabel("0\u00B0 = right, 90\u00B0 = up", FONT_SMALL, TEXT_SECONDARY), gbc);
+        board.add(styledLabel("Click the green to aim, Putt! locks the power",
+                FONT_SMALL, TEXT_SECONDARY), gbc);
+
+        if (myTurn) {
+            final int[] tick = {0};
+            puttPowerTimer = new Timer(30, e -> {
+                if (!powerBar.isShowing()) {
+                    ((Timer) e.getSource()).stop();
+                    return;
+                }
+                tick[0]++;
+                // Triangle wave sweeping 1..100 and back
+                int phase = tick[0] % 100;
+                int value = phase <= 50 ? 1 + phase * 2 : 1 + (100 - phase) * 2;
+                powerBar.setValue(Math.min(100, value));
+                powerBar.setString("Power " + powerBar.getValue());
+            });
+            puttPowerTimer.start();
+            puttBtn.addActionListener(e -> {
+                if (puttPowerTimer != null) {
+                    puttPowerTimer.stop();
+                    puttPowerTimer = null;
+                }
+                puttBtn.setEnabled(false);
+                sendCommand("MOVE|SHOT|" + Math.round(puttAimAngle * 100) / 100.0
+                        + "|" + powerBar.getValue());
+            });
+        }
+    }
+
+    private static Color puttPowerUpColor(String type) {
+        return switch (type) {
+            case "BLAST" -> new Color(0xFF, 0x8F, 0x00);
+            case "MAGNET" -> new Color(0x00, 0xBC, 0xD4);
+            case "SAND" -> new Color(0xD7, 0xB3, 0x77);
+            case "WOBBLE" -> new Color(0xAB, 0x47, 0xBC);
+            default -> Color.GRAY;
+        };
     }
 
     private void renderRps(JPanel board, String[] fields, boolean myTurn) {
@@ -1560,6 +1742,66 @@ public final class HubClient extends JFrame {
                 + ";stackDraws=" + stackDraws.isSelected()
                 + ";sevenZero=" + sevenZero.isSelected();
         lastUnoOptions = options;
+        return options;
+    }
+
+    /** Last Putt Putt rule selections, reused to prefill the rules dialog. */
+    private String lastPuttOptions = "";
+
+    /**
+     * Shows the Putt Putt course-setup dialog and returns the chosen options
+     * as a {@code key=value;key=value} string, or null if cancelled.
+     */
+    private String promptPuttPuttRules() {
+        java.util.Map<String, String> last = new java.util.HashMap<>();
+        for (String pair : lastPuttOptions.split(";")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0) {
+                last.put(pair.substring(0, eq), pair.substring(eq + 1));
+            }
+        }
+        JSpinner holes = new JSpinner(new SpinnerNumberModel(
+                Integer.parseInt(last.getOrDefault("holes", "9")), 1, 18, 1));
+        JComboBox<String> difficulty = new JComboBox<>(new String[]{"EASY", "MEDIUM", "HARD"});
+        difficulty.setSelectedItem(last.getOrDefault("difficulty", "MEDIUM"));
+        JComboBox<String> courseSize = new JComboBox<>(new String[]{"SMALL", "MEDIUM", "LARGE"});
+        courseSize.setSelectedItem(last.getOrDefault("courseSize", "MEDIUM"));
+        JSpinner maxPlayers = new JSpinner(new SpinnerNumberModel(
+                Integer.parseInt(last.getOrDefault("maxPlayers", "4")), 2, 4, 1));
+        JCheckBox powerUps = new JCheckBox(
+                "Power-ups: collect boosts on the green (bad ones hit your rivals)",
+                Boolean.parseBoolean(last.getOrDefault("powerUps", "true")));
+
+        JPanel form = new JPanel(new GridLayout(0, 1, 4, 4));
+        JPanel holesRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        holesRow.add(new JLabel("Holes:"));
+        holesRow.add(holes);
+        JPanel difficultyRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        difficultyRow.add(new JLabel("Course difficulty:"));
+        difficultyRow.add(difficulty);
+        JPanel sizeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        sizeRow.add(new JLabel("Course size:"));
+        sizeRow.add(courseSize);
+        JPanel playersRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        playersRow.add(new JLabel("Max players:"));
+        playersRow.add(maxPlayers);
+        form.add(holesRow);
+        form.add(difficultyRow);
+        form.add(sizeRow);
+        form.add(playersRow);
+        form.add(powerUps);
+
+        int result = JOptionPane.showConfirmDialog(this, form, "Putt Putt Course Setup",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) {
+            return null;
+        }
+        String options = "holes=" + holes.getValue()
+                + ";difficulty=" + difficulty.getSelectedItem()
+                + ";courseSize=" + courseSize.getSelectedItem()
+                + ";maxPlayers=" + maxPlayers.getValue()
+                + ";powerUps=" + powerUps.isSelected();
+        lastPuttOptions = options;
         return options;
     }
 
