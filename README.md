@@ -14,17 +14,20 @@ A multiplayer board game platform with LAN discovery, user authentication, a lob
 | **Dots and Boxes** | 2–4 | 5×5 dot grid, complete boxes to score, extra turn on completion |
 | **Gomoku** | 2 | 15×15 board, first to five stones in a row wins |
 | **Rock Paper Scissors** | 2 | Simultaneous picks, first to three round wins |
+| **Putt Putt** | 2–4 | Animated mini golf — angle & power shots, wall bounces, fewest strokes wins |
 
 More games can be added without touching this codebase — see [docs/PLUGIN_API.md](docs/PLUGIN_API.md).
 
 ## Features
 
+- **UNO house rules** — configure hand size, max players, draw-to-match, play-drawn-card, call-UNO penalties, +2/+4 stacking and seven-zero swaps when creating a room (and change them on rematch)
 - **Room chat** — talk to your opponents while you play
 - **Emotes, taunts & noises** — nine one-click emotes (👋 😂 😭 😠 😱 🤝 😜 😎 📯) broadcast to the room with an animated toast and a short sound effect
 - **Waiting screen** — a pulsing waiting-for-players view shows room status before the game starts
 - **Leaderboard & levels** — wins/losses/draws are persisted; players earn XP and levels (🏆 button in the lobby)
 - **Character building** — pick an avatar symbol, color and a title (Novice → Legend); your title and level are shown in the lobby
-- **Play Again** — one click rematch in the same room; stale finished rooms are swept automatically after 5 minutes
+- **Play Again** — one click rematch in the same room (optionally with new rules); stale finished rooms are swept after 5 minutes and empty rooms disappear 30 seconds after the last player leaves
+- **Win/lose banner** — a big, unmissable YOU WIN / YOU LOSE banner when a game ends
 - **Spectator mode** — a separate no-login client watches any room with a huge "whose turn" banner, ideal for projectors/casting (F11 = full screen)
 - **Plugin API** — drop a jar in `plugins/` to add new games ([docs/PLUGIN_API.md](docs/PLUGIN_API.md))
 
@@ -113,7 +116,7 @@ Line-based TCP protocol. Free-text fields are Base64-URL encoded.
 | Command | Description |
 |---------|-------------|
 | `LIST` | Request room list |
-| `CREATE\|gameType\|base64(name)` | Create room |
+| `CREATE\|gameType\|base64(name)[\|base64(options)]` | Create room; `options` is `key=value;key=value` rule settings (see UNO house rules) |
 | `JOINROOM\|roomId` | Join a game room |
 | `LEAVEROOM` | Leave current room |
 | `LEADERBOARD` | Request the top-20 leaderboard |
@@ -124,7 +127,20 @@ Line-based TCP protocol. Free-text fields are Base64-URL encoded.
 | `MOVE\|...` | Game-specific move data |
 | `CHAT\|base64(message)` | Send a chat message to the room |
 | `EMOTE\|emoteId` | Broadcast an emote/taunt (`WAVE`, `LAUGH`, `CRY`, `ANGRY`, `SHOCK`, `GG`, `TAUNT`, `BOAST`, `HORN`) |
-| `PLAYAGAIN` | Restart a finished game in the same room |
+| `PLAYAGAIN[\|base64(options)]` | Restart a finished game in the same room, optionally with new rule options |
+
+### UNO house rule options
+Passed in the `options` field of `CREATE`/`PLAYAGAIN` (all optional):
+
+| Key | Values | Description |
+|-----|--------|-------------|
+| `handSize` | 3–10 (default 7) | Starting hand size |
+| `maxPlayers` | 2–8 (default 4) | Maximum players |
+| `drawToMatch` | true/false | Keep drawing until you draw a playable card |
+| `playDrawn` | true/false | A playable drawn card may be played immediately (`MOVE\|PLAYDRAWN\|color`) or kept (`MOVE\|KEEP`) |
+| `callUno` | true/false | Call UNO (`MOVE\|CALLUNO`) at two cards or draw a 2 card penalty |
+| `stackDraws` | true/false | Stack +2/+4 cards to pass the accumulated penalty on |
+| `sevenZero` | true/false | Playing a 7 swaps hands with the next player; a 0 rotates all hands |
 
 ### Spectating (no login required)
 | Command | Description |

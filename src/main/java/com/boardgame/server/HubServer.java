@@ -43,6 +43,7 @@ public final class HubServer implements AutoCloseable {
     private final ScheduledExecutorService cleaner;
     /** Finished rooms are swept from the lobby after this long. */
     private static final long STALE_ROOM_MILLIS = TimeUnit.MINUTES.toMillis(5);
+    private static final long EMPTY_ROOM_MILLIS = TimeUnit.SECONDS.toMillis(30);
     private ServerSocket serverSocket;
 
     public HubServer(ServerConfig config) throws IOException {
@@ -63,14 +64,21 @@ public final class HubServer implements AutoCloseable {
             t.setDaemon(true);
             return t;
         });
-        cleaner.scheduleAtFixedRate(this::sweepStaleRooms, 1, 1, TimeUnit.MINUTES);
+        cleaner.scheduleAtFixedRate(this::sweepStaleRooms, 10, 10, TimeUnit.SECONDS);
     }
 
-    /** Removes rooms whose game finished a while ago, returning players to the lobby. */
+    /**
+     * Removes rooms whose game finished a while ago (returning players to the
+     * lobby) and rooms that have been empty for {@link #EMPTY_ROOM_MILLIS}.
+     */
     private void sweepStaleRooms() {
         boolean removedAny = false;
         for (Room room : rooms.values()) {
-            if (room.game().isFinished() && room.finishedSinceMillis() >= STALE_ROOM_MILLIS) {
+            boolean stale = room.game().isFinished()
+                    && room.finishedSinceMillis() >= STALE_ROOM_MILLIS;
+            boolean abandoned = room.players().isEmpty()
+                    && room.emptySinceMillis() >= EMPTY_ROOM_MILLIS;
+            if (stale || abandoned) {
                 rooms.remove(room.id());
                 removedAny = true;
                 for (ClientSession session : sessions.values()) {
@@ -218,7 +226,7 @@ public final class HubServer implements AutoCloseable {
                     case "JOINROOM" -> handleJoinRoom(parts);
                     case "LEAVEROOM" -> handleLeaveRoom();
                     case "MOVE" -> handleMove(parts);
-                    case "PLAYAGAIN" -> handlePlayAgain();
+                    case "PLAYAGAIN" -> handlePlayAgain(parts);
                     case "CHAT" -> handleChat(parts);
                     case "EMOTE" -> handleEmote(parts);
                     case "LEADERBOARD" -> handleLeaderboard();
@@ -303,8 +311,8 @@ public final class HubServer implements AutoCloseable {
 
         private void handleCreate(String[] parts) {
             requireAuth();
-            if (parts.length != 3) {
-                throw new IllegalArgumentException("Usage: CREATE|gameType|roomName");
+            if (parts.length != 3 && parts.length != 4) {
+                throw new IllegalArgumentException("Usage: CREATE|gameType|roomName[|options]");
             }
             if (rooms.size() >= config.maxRooms()) {
                 throw new IllegalStateException("Maximum rooms reached");
@@ -314,12 +322,34 @@ public final class HubServer implements AutoCloseable {
             if (roomName.isBlank() || roomName.length() > 32) {
                 throw new IllegalArgumentException("Room name must be 1-32 characters");
             }
-            BoardGame game = GameFactory.create(gameType);
+            java.util.Map<String, String> options =
+                    parts.length == 4 ? parseOptions(parts[3]) : java.util.Map.of();
+            BoardGame game = GameFactory.create(gameType, options);
             String roomId = "room-" + roomCounter.incrementAndGet();
-            Room room = new Room(roomId, roomName, game);
+            Room room = new Room(roomId, roomName, game, options);
             rooms.put(roomId, room);
             send("OK|" + Protocol.encode(roomId));
             broadcastLobby();
+        }
+
+        /**
+         * Parses a Base64-URL encoded {@code key=value;key=value} option list
+         * (the optional last field of CREATE and PLAYAGAIN).
+         */
+        private java.util.Map<String, String> parseOptions(String encoded) {
+            String decoded = Protocol.decode(encoded);
+            if (decoded.isBlank()) {
+                return java.util.Map.of();
+            }
+            java.util.Map<String, String> options = new java.util.LinkedHashMap<>();
+            for (String pair : decoded.split(";")) {
+                int eq = pair.indexOf('=');
+                if (eq <= 0) {
+                    throw new IllegalArgumentException("Options must be key=value;key=value");
+                }
+                options.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());
+            }
+            return options;
         }
 
         private void handleJoinRoom(String[] parts) {
@@ -336,6 +366,7 @@ public final class HubServer implements AutoCloseable {
                 throw new IllegalArgumentException("Room not found");
             }
             room.game().addPlayer(username);
+            room.noteOccupied();
             currentRoom = room;
             send("OK|" + Protocol.encode("Joined " + room.name()));
             broadcastRoom(room);
@@ -358,7 +389,9 @@ public final class HubServer implements AutoCloseable {
                 room.game().removePlayer(username);
                 currentRoom = null;
                 if (room.game().players().isEmpty()) {
-                    rooms.remove(room.id());
+                    // Keep the empty room around briefly; the sweeper removes
+                    // it after EMPTY_ROOM_MILLIS if nobody joins again.
+                    room.noteEmpty();
                 } else {
                     broadcastRoom(room);
                 }
@@ -382,8 +415,12 @@ public final class HubServer implements AutoCloseable {
             }
         }
 
-        /** Restarts a finished game in the same room with the same players. */
-        private void handlePlayAgain() {
+        /**
+         * Restarts a finished game in the same room with the same players.
+         * Accepts optional new rule options: {@code PLAYAGAIN[|options]};
+         * without options the room's current rules are reused.
+         */
+        private void handlePlayAgain(String[] parts) {
             requireAuth();
             if (currentRoom == null) {
                 throw new IllegalStateException("Not in a room");
@@ -394,11 +431,12 @@ public final class HubServer implements AutoCloseable {
                     throw new IllegalStateException("Game is still running");
                 }
                 var players = room.game().players();
-                var freshGame = GameRegistry.create(room.gameType());
+                var options = parts.length > 1 ? parseOptions(parts[1]) : room.options();
+                var freshGame = GameRegistry.create(room.gameType(), options);
                 for (String player : players) {
                     freshGame.addPlayer(player);
                 }
-                room.resetGame(freshGame);
+                room.resetGame(freshGame, options);
             }
             broadcastToRoom(room, "CHAT|" + Protocol.encode(username)
                     + "|" + Protocol.encode("started a rematch!"));

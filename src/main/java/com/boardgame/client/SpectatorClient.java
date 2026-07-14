@@ -296,11 +296,13 @@ public final class SpectatorClient extends JFrame {
         private String gameType = "";
         private String[] rows = new String[0];
         private String info = "";
+        private String[] puttFields;
 
         void update(String gameType, String[] fields) {
             this.gameType = gameType;
             this.rows = new String[0];
             this.info = "";
+            this.puttFields = null;
             String data = fields.length > 3 ? fields[3] : "";
             switch (gameType) {
                 case "TICTACTOE" -> {
@@ -312,6 +314,7 @@ public final class SpectatorClient extends JFrame {
                 case "CONNECTFOUR", "CHECKERS", "REVERSI", "GOMOKU" -> rows = data.split(",");
                 case "UNO" -> info = fields.length > 6 ? "Hands: " + decodePairs(fields[6]) : "";
                 case "RPS" -> info = "Score: " + decodePairs(data);
+                case "PUTTPUTT" -> puttFields = fields;
                 case "DOTSANDBOXES" -> info = fields.length > 5
                         ? "Boxes: " + decodePairs(fields[5]) : "";
                 default -> info = "";
@@ -339,7 +342,9 @@ public final class SpectatorClient extends JFrame {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setColor(BG_DARK);
             g2.fillRect(0, 0, getWidth(), getHeight());
-            if (rows.length > 0) {
+            if (puttFields != null) {
+                paintPuttPutt(g2);
+            } else if (rows.length > 0) {
                 paintGrid(g2);
             } else if (!info.isEmpty()) {
                 g2.setColor(TEXT_PRIMARY);
@@ -348,6 +353,76 @@ public final class SpectatorClient extends JFrame {
                 g2.drawString(info, (getWidth() - fm.stringWidth(info)) / 2, getHeight() / 2);
             }
             g2.dispose();
+        }
+
+        /** Paints the Putt Putt course, balls, scores and the last shot's trace. */
+        private void paintPuttPutt(Graphics2D g2) {
+            // fields: started|finished|current|w,h|hx,hy,hr|walls|balls|shooter|path|message
+            String[] dims = puttFields[3].split(",");
+            double courseW = Double.parseDouble(dims[0]);
+            double courseH = Double.parseDouble(dims[1]);
+            int margin = 40;
+            double sx = (getWidth() - margin * 2) / courseW;
+            double sy = (getHeight() - margin * 2) / courseH;
+            g2.translate(margin, margin);
+            g2.setColor(new Color(0x2E, 0x7D, 0x32));
+            g2.fillRoundRect(0, 0, (int) (courseW * sx), (int) (courseH * sy), 16, 16);
+            g2.setColor(new Color(0x6D, 0x4C, 0x41));
+            if (!puttFields[5].isEmpty()) {
+                for (String wall : puttFields[5].split(";")) {
+                    String[] r = wall.split(":");
+                    g2.fillRect((int) (Double.parseDouble(r[0]) * sx),
+                            (int) (Double.parseDouble(r[1]) * sy),
+                            (int) (Double.parseDouble(r[2]) * sx),
+                            (int) (Double.parseDouble(r[3]) * sy));
+                }
+            }
+            String[] hole = puttFields[4].split(",");
+            int hx = (int) (Double.parseDouble(hole[0]) * sx);
+            int hy = (int) (Double.parseDouble(hole[1]) * sy);
+            int hr = Math.max(4, (int) (Double.parseDouble(hole[2]) * sx));
+            g2.setColor(Color.BLACK);
+            g2.fillOval(hx - hr, hy - hr, hr * 2, hr * 2);
+            // Trace of the last shot
+            if (puttFields.length > 9 && !puttFields[8].isEmpty()) {
+                g2.setColor(new Color(255, 255, 255, 120));
+                String[] points = puttFields[8].split(";");
+                int px = -1;
+                int py = -1;
+                for (String point : points) {
+                    String[] xy = point.split(":");
+                    int cx = (int) (Double.parseDouble(xy[0]) * sx);
+                    int cy = (int) (Double.parseDouble(xy[1]) * sy);
+                    if (px >= 0) {
+                        g2.drawLine(px, py, cx, cy);
+                    }
+                    px = cx;
+                    py = cy;
+                }
+            }
+            // Balls + scores
+            Color[] ballColors = {Color.WHITE, new Color(0x4F, 0xC3, 0xF7),
+                    new Color(0xFF, 0xD5, 0x4F), new Color(0xFF, 0x6B, 0x6B)};
+            int index = 0;
+            if (!puttFields[6].isEmpty()) {
+                for (String entry : puttFields[6].split(",")) {
+                    String[] row = entry.split(":");
+                    String name = Protocol.decode(row[0]);
+                    boolean holed = Boolean.parseBoolean(row[4]);
+                    int bx = (int) (Double.parseDouble(row[1]) * sx);
+                    int by = (int) (Double.parseDouble(row[2]) * sy);
+                    g2.setColor(ballColors[index % ballColors.length]);
+                    if (!holed) {
+                        int r = Math.max(5, (int) (1.4 * sx));
+                        g2.fillOval(bx - r, by - r, r * 2, r * 2);
+                    }
+                    g2.setFont(FONT_BIG);
+                    g2.drawString(name + ": " + row[3] + (holed ? " \u26F3" : ""),
+                            10 + index * 220, (int) (courseH * sy) + 28);
+                    index++;
+                }
+            }
+            g2.translate(-margin, -margin);
         }
 
         private void paintGrid(Graphics2D g2) {

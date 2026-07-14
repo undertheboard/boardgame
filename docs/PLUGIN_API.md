@@ -151,12 +151,32 @@ public interface GamePlugin {
     default String displayName() {...}      // "Nim"
     default String description() {...}      // one-liner for UIs
     BoardGame createGame();                 // fresh instance per room
+    default BoardGame createGame(Map<String, String> options) {...} // configurable rules
 }
 ```
 
 `createGame()` is invoked for every `CREATE` command, and again when players
 choose **Play Again** after a finished match — always return a brand-new,
 independent instance.
+
+### Configurable rules (options)
+
+Room creators can pass rule options on the wire:
+`CREATE|TYPE|base64(roomName)|base64(key=value;key=value)` and
+`PLAYAGAIN|base64(key=value;key=value)`. The hub decodes the option list into
+a `Map<String, String>` and calls `createGame(options)`.
+
+* The default implementation ignores the options and delegates to
+  `createGame()`, so plugins without configurable rules need no changes.
+* Plugins with configurable rules should override `createGame(Map)`, validate
+  each value, and throw `IllegalArgumentException` with a clear message for
+  invalid ones (the message is sent back to the creating client as an `ERROR`).
+* **Ignore unknown keys** for forward compatibility.
+* The built-in UNO game is the reference implementation — see
+  `UnoRules.fromOptions(...)` for a complete validated example (hand size,
+  max players, draw-to-match, play-drawn, call-UNO, stacking, seven-zero).
+* On **Play Again** the room's stored options are reused unless the rematch
+  supplies new ones.
 
 ## Plugin discovery
 

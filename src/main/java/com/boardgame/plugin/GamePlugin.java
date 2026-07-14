@@ -101,4 +101,25 @@ public interface GamePlugin {
      * @return a fresh {@link BoardGame} in its initial (waiting for players) state
      */
     BoardGame createGame();
+
+    /**
+     * Creates a new game instance configured with the given options.
+     * <p>Options are free-form {@code key=value} string pairs supplied by the
+     * room creator (wire format: {@code CREATE|TYPE|roomName|options} where
+     * {@code options} is a Base64-URL encoded {@code key=value;key=value}
+     * list). Plugins that support configurable rules should override this
+     * method, validate the values, and throw {@link IllegalArgumentException}
+     * for invalid ones. Unknown keys should be ignored for forward
+     * compatibility. The built-in UNO game is the reference implementation
+     * (see {@code UnoRules.fromOptions}).
+     * <p>The default implementation ignores the options and delegates to
+     * {@link #createGame()}.
+     *
+     * @param options immutable option map; never null, possibly empty
+     * @return a fresh configured {@link BoardGame}
+     * @throws IllegalArgumentException if an option value is invalid
+     */
+    default BoardGame createGame(java.util.Map<String, String> options) {
+        return createGame();
+    }
 }

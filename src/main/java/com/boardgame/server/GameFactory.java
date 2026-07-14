@@ -21,6 +21,11 @@ public final class GameFactory {
         return GameRegistry.types();
     }
 
+    /** Creates a fresh game of the given type configured with rule options. */
+    public static BoardGame create(String gameType, java.util.Map<String, String> options) {
+        return GameRegistry.create(gameType, options);
+    }
+
     /**
      * Creates a fresh game of the given type.
      *

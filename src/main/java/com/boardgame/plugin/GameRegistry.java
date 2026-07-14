@@ -119,11 +119,25 @@ public final class GameRegistry {
      * @throws IllegalArgumentException if no plugin provides the type
      */
     public static synchronized BoardGame create(String gameType) {
+        return create(gameType, Map.of());
+    }
+
+    /**
+     * Creates a fresh game instance for the given type, configured with the
+     * given options (see {@link GamePlugin#createGame(Map)}).
+     *
+     * @param gameType the (case-insensitive) game type
+     * @param options  option map for configurable rules; may be empty
+     * @return a new {@link BoardGame}
+     * @throws IllegalArgumentException if no plugin provides the type or an
+     *                                  option value is invalid
+     */
+    public static synchronized BoardGame create(String gameType, Map<String, String> options) {
         GamePlugin plugin = PLUGINS.get(gameType.toUpperCase());
         if (plugin == null) {
             throw new IllegalArgumentException("Unknown game type: " + gameType);
         }
-        return plugin.createGame();
+        return plugin.createGame(options == null ? Map.of() : options);
     }
 
     /**
@@ -155,8 +169,34 @@ public final class GameRegistry {
     }
 
     private static void registerBuiltins() {
-        registerBuiltin("UNO", "UNO", "Classic card game with skips, reverses, draws and wilds.",
-                com.boardgame.games.uno.UnoGame::new);
+        register(new GamePlugin() {
+            @Override
+            public String gameType() {
+                return "UNO";
+            }
+
+            @Override
+            public String displayName() {
+                return "UNO";
+            }
+
+            @Override
+            public String description() {
+                return "Classic card game with skips, reverses, draws, wilds and house rules.";
+            }
+
+            @Override
+            public BoardGame createGame() {
+                return new com.boardgame.games.uno.UnoGame();
+            }
+
+            @Override
+            public BoardGame createGame(Map<String, String> options) {
+                return new com.boardgame.games.uno.UnoGame(
+                        com.boardgame.games.uno.UnoRules.fromOptions(options),
+                        new java.util.Random());
+            }
+        });
         registerBuiltin("TICTACTOE", "Tic-Tac-Toe", "3x3 grid, first to three in a row wins.",
                 com.boardgame.games.tictactoe.TicTacToeGame::new);
         registerBuiltin("CONNECTFOUR", "Connect Four", "7x6 gravity drop, first to four in a line wins.",
@@ -171,6 +211,8 @@ public final class GameRegistry {
                 com.boardgame.games.gomoku.GomokuGame::new);
         registerBuiltin("RPS", "Rock Paper Scissors", "Best of five: first player to three round wins.",
                 com.boardgame.games.rps.RockPaperScissorsGame::new);
+        registerBuiltin("PUTTPUTT", "Putt Putt", "Animated mini golf: bounce off walls, fewest strokes wins.",
+                com.boardgame.games.puttputt.PuttPuttGame::new);
     }
 
     private static void registerBuiltin(String type, String name, String description,

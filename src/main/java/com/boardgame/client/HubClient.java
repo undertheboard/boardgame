@@ -17,6 +17,9 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
+import javax.swing.JCheckBox;
+import javax.swing.SpinnerNumberModel;
+import javax.swing.JSpinner;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JScrollPane;
@@ -76,6 +79,7 @@ public final class HubClient extends JFrame {
     private static final Font FONT_HEADER = new Font("SansSerif", Font.BOLD, 20);
     private static final Font FONT_BODY = new Font("SansSerif", Font.PLAIN, 14);
     private static final Font FONT_BUTTON = new Font("SansSerif", Font.BOLD, 14);
+    private static final Font FONT_SMALL = new Font("SansSerif", Font.PLAIN, 11);
 
     private final CardLayout cardLayout = new CardLayout();
     private final JPanel mainPanel = new JPanel(cardLayout);
@@ -391,7 +395,7 @@ public final class HubClient extends JFrame {
         gc.gridy = 0;
         gameTypeBox = styledComboBox(new String[]{
                 "UNO", "TICTACTOE", "CONNECTFOUR", "CHECKERS", "REVERSI", "DOTSANDBOXES",
-                "GOMOKU", "RPS"});
+                "GOMOKU", "RPS", "PUTTPUTT"});
         createPanel.add(gameTypeBox, gc);
         gc.gridy = 1;
         JTextField roomNameField = styledTextField(12);
@@ -401,7 +405,16 @@ public final class HubClient extends JFrame {
         createBtn.addActionListener(e -> {
             String name = roomNameField.getText().trim();
             if (!name.isEmpty()) {
-                sendCommand("CREATE|" + gameTypeBox.getSelectedItem() + "|" + Protocol.encode(name));
+                String type = String.valueOf(gameTypeBox.getSelectedItem());
+                String options = "UNO".equals(type) ? promptUnoRules() : null;
+                if ("UNO".equals(type) && options == null) {
+                    return; // dialog cancelled
+                }
+                String cmd = "CREATE|" + type + "|" + Protocol.encode(name);
+                if (options != null && !options.isEmpty()) {
+                    cmd += "|" + Protocol.encode(options);
+                }
+                sendCommand(cmd);
                 roomNameField.setText("");
             }
         });
@@ -832,16 +845,51 @@ public final class HubClient extends JFrame {
             case "REVERSI" -> renderReversi(board, fields, myTurn);
             case "GOMOKU" -> renderGomoku(board, fields, myTurn);
             case "RPS" -> renderRps(board, fields, myTurn);
+            case "PUTTPUTT" -> renderPuttPutt(board, fields, myTurn);
             case "UNO" -> renderUno(board, fields, myTurn);
             default -> renderGeneric(board, fields, myTurn);
         }
 
         gamePanel.add(board, BorderLayout.CENTER);
         if (finished) {
+            String outcome;
+            Color outcomeColor;
+            String lower = statusText.toLowerCase();
+            if (lower.startsWith(username.toLowerCase()) && lower.contains("win")) {
+                outcome = "\uD83C\uDFC6 YOU WIN!";
+                outcomeColor = new Color(0xFF, 0xD7, 0x00);
+            } else if (lower.contains("wins")) {
+                outcome = "\uD83D\uDC80 YOU LOSE";
+                outcomeColor = new Color(0xFF, 0x6B, 0x6B);
+            } else {
+                outcome = "\uD83C\uDFC1 GAME OVER";
+                outcomeColor = TEXT_PRIMARY;
+            }
+            JPanel bannerPanel = darkPanel(new GridLayout(0, 1, 0, 2));
+            JLabel banner = new JLabel(outcome, SwingConstants.CENTER);
+            banner.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 42));
+            banner.setForeground(outcomeColor);
+            JLabel detail = new JLabel(statusText, SwingConstants.CENTER);
+            detail.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
+            detail.setForeground(TEXT_PRIMARY);
+            bannerPanel.add(banner);
+            bannerPanel.add(detail);
+            gamePanel.add(bannerPanel, BorderLayout.NORTH);
+
             JButton againBtn = accentButton("\uD83D\uDD01 Play Again");
             againBtn.addActionListener(e -> sendCommand("PLAYAGAIN"));
             JPanel againRow = darkPanel(new FlowLayout(FlowLayout.CENTER, 8, 8));
             againRow.add(againBtn);
+            if ("UNO".equals(gameType)) {
+                JButton rulesBtn = accentButton("\uD83D\uDD01 Play Again (change rules)");
+                rulesBtn.addActionListener(e -> {
+                    String options = promptUnoRules();
+                    if (options != null) {
+                        sendCommand("PLAYAGAIN|" + Protocol.encode(options));
+                    }
+                });
+                againRow.add(rulesBtn);
+            }
             againRow.add(styledLabel("or leave the room \u2014 it closes automatically after a while",
                     FONT_BODY, TEXT_SECONDARY));
             gamePanel.add(againRow, BorderLayout.SOUTH);
@@ -986,6 +1034,161 @@ public final class HubClient extends JFrame {
         renderGridGame(board, fields, myTurn, 15, "GOMOKU");
     }
 
+    /**
+     * Renders the Putt Putt course with an animated shot. The server sends the
+     * sampled path of the most recent shot; the shooter's ball rolls along it.
+     */
+    private void renderPuttPutt(JPanel board, String[] fields, boolean myTurn) {
+        // fields: started|finished|current|w,h|hx,hy,hr|walls|balls|shooter|path|message
+        String[] dims = fields[3].split(",");
+        double courseW = Double.parseDouble(dims[0]);
+        double courseH = Double.parseDouble(dims[1]);
+        String[] hole = fields[4].split(",");
+        double holeX = Double.parseDouble(hole[0]);
+        double holeY = Double.parseDouble(hole[1]);
+        double holeR = Double.parseDouble(hole[2]);
+        String wallsStr = fields[5];
+        String ballsStr = fields[6];
+        String shooter = Protocol.decode(fields[7]);
+        String pathStr = fields.length > 9 ? fields[8] : "";
+
+        java.util.List<double[]> path = new java.util.ArrayList<>();
+        if (!pathStr.isEmpty()) {
+            for (String point : pathStr.split(";")) {
+                String[] xy = point.split(":");
+                path.add(new double[]{Double.parseDouble(xy[0]), Double.parseDouble(xy[1])});
+            }
+        }
+        java.util.List<String[]> ballRows = new java.util.ArrayList<>();
+        if (!ballsStr.isEmpty()) {
+            for (String entry : ballsStr.split(",")) {
+                ballRows.add(entry.split(":"));
+            }
+        }
+        Color[] ballColors = {Color.WHITE, new Color(0x4F, 0xC3, 0xF7),
+                new Color(0xFF, 0xD5, 0x4F), new Color(0xFF, 0x6B, 0x6B)};
+
+        final int[] animIndex = {path.size() - 1};
+        JPanel course = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                double sx = getWidth() / courseW;
+                double sy = getHeight() / courseH;
+                // Green with light stripes
+                g2.setColor(new Color(0x2E, 0x7D, 0x32));
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 16, 16);
+                g2.setColor(new Color(0x38, 0x8E, 0x3C));
+                for (int i = 0; i < courseW; i += 10) {
+                    g2.fillRect((int) (i * sx), 0, (int) (5 * sx), getHeight());
+                }
+                // Walls
+                g2.setColor(new Color(0x6D, 0x4C, 0x41));
+                if (!wallsStr.isEmpty()) {
+                    for (String wall : wallsStr.split(";")) {
+                        String[] r = wall.split(":");
+                        g2.fillRect((int) (Double.parseDouble(r[0]) * sx),
+                                (int) (Double.parseDouble(r[1]) * sy),
+                                (int) (Double.parseDouble(r[2]) * sx),
+                                (int) (Double.parseDouble(r[3]) * sy));
+                    }
+                }
+                // Hole
+                int hr = (int) (holeR * sx);
+                g2.setColor(Color.BLACK);
+                g2.fillOval((int) (holeX * sx) - hr, (int) (holeY * sy) - hr, hr * 2, hr * 2);
+                g2.setColor(Color.LIGHT_GRAY);
+                g2.drawLine((int) (holeX * sx), (int) (holeY * sy) - hr,
+                        (int) (holeX * sx), (int) (holeY * sy) - hr * 4);
+                g2.setColor(Color.RED);
+                g2.fillPolygon(new int[]{(int) (holeX * sx), (int) (holeX * sx) + hr * 2,
+                        (int) (holeX * sx)},
+                        new int[]{(int) (holeY * sy) - hr * 4, (int) (holeY * sy) - hr * 3,
+                                (int) (holeY * sy) - hr * 2}, 3);
+                // Balls (the animating shooter ball uses the path position)
+                int ballIndex = 0;
+                for (String[] row : ballRows) {
+                    String name = Protocol.decode(row[0]);
+                    double bx = Double.parseDouble(row[1]);
+                    double by = Double.parseDouble(row[2]);
+                    boolean holed = Boolean.parseBoolean(row[4]);
+                    if (name.equals(shooter) && animIndex[0] < path.size() - 1) {
+                        bx = path.get(animIndex[0])[0];
+                        by = path.get(animIndex[0])[1];
+                        holed = false;
+                    }
+                    if (!holed) {
+                        int r = Math.max(4, (int) (1.4 * sx));
+                        g2.setColor(ballColors[ballIndex % ballColors.length]);
+                        g2.fillOval((int) (bx * sx) - r, (int) (by * sy) - r, r * 2, r * 2);
+                        g2.setColor(Color.DARK_GRAY);
+                        g2.drawOval((int) (bx * sx) - r, (int) (by * sy) - r, r * 2, r * 2);
+                        g2.setColor(TEXT_PRIMARY);
+                        g2.setFont(FONT_SMALL);
+                        g2.drawString(name, (int) (bx * sx) - r, (int) (by * sy) - r - 3);
+                    }
+                    ballIndex++;
+                }
+                g2.dispose();
+            }
+        };
+        course.setOpaque(false);
+        course.setPreferredSize(new Dimension(640, 384));
+        if (path.size() > 1) {
+            animIndex[0] = 0;
+            Timer rollTimer = new Timer(25, null);
+            rollTimer.addActionListener(e -> {
+                animIndex[0]++;
+                if (animIndex[0] >= path.size() - 1 || !course.isShowing()) {
+                    rollTimer.stop();
+                }
+                course.repaint();
+            });
+            rollTimer.start();
+        }
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(6, 6, 6, 6);
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.gridwidth = 6;
+        board.add(course, gbc);
+
+        // Scorecard
+        gbc.gridy = 1;
+        StringBuilder score = new StringBuilder("<html>");
+        for (String[] row : ballRows) {
+            score.append(Protocol.decode(row[0])).append(": ").append(row[3])
+                    .append(Boolean.parseBoolean(row[4]) ? " \u26F3" : "").append("&nbsp;&nbsp;&nbsp;");
+        }
+        score.append("</html>");
+        board.add(styledLabel(score.toString(), FONT_BODY, TEXT_SECONDARY), gbc);
+
+        // Shot controls
+        gbc.gridy = 2;
+        gbc.gridwidth = 1;
+        board.add(styledLabel("Angle\u00B0", FONT_BODY, TEXT_SECONDARY), gbc);
+        gbc.gridx = 1;
+        JSpinner angle = new JSpinner(new SpinnerNumberModel(0, -180, 360, 5));
+        board.add(angle, gbc);
+        gbc.gridx = 2;
+        board.add(styledLabel("Power", FONT_BODY, TEXT_SECONDARY), gbc);
+        gbc.gridx = 3;
+        JSpinner power = new JSpinner(new SpinnerNumberModel(50, 1, 100, 5));
+        board.add(power, gbc);
+        gbc.gridx = 4;
+        JButton puttBtn = accentButton("\u26F3 Putt!");
+        puttBtn.setEnabled(myTurn);
+        puttBtn.addActionListener(e ->
+                sendCommand("MOVE|SHOT|" + angle.getValue() + "|" + power.getValue()));
+        board.add(puttBtn, gbc);
+        gbc.gridx = 5;
+        board.add(styledLabel("0\u00B0 = right, 90\u00B0 = up", FONT_SMALL, TEXT_SECONDARY), gbc);
+    }
+
     private void renderRps(JPanel board, String[] fields, boolean myTurn) {
         // fields: started|finished|pendingPlayer|scores|round|myChoice|message
         String scores = fields[3];
@@ -1100,12 +1303,79 @@ public final class HubClient extends JFrame {
         }
     }
 
+    /** Last UNO rule selections, reused to prefill the rules dialog. */
+    private String lastUnoOptions = "";
+
+    /**
+     * Shows the UNO house-rules dialog and returns the chosen options as a
+     * {@code key=value;key=value} string, or null if the dialog was cancelled.
+     */
+    private String promptUnoRules() {
+        java.util.Map<String, String> last = new java.util.HashMap<>();
+        for (String pair : lastUnoOptions.split(";")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0) {
+                last.put(pair.substring(0, eq), pair.substring(eq + 1));
+            }
+        }
+        JSpinner handSize = new JSpinner(new SpinnerNumberModel(
+                Integer.parseInt(last.getOrDefault("handSize", "7")), 3, 10, 1));
+        JSpinner maxPlayers = new JSpinner(new SpinnerNumberModel(
+                Integer.parseInt(last.getOrDefault("maxPlayers", "4")), 2, 8, 1));
+        JCheckBox drawToMatch = new JCheckBox("Draw to match: keep drawing until you get a playable card",
+                Boolean.parseBoolean(last.getOrDefault("drawToMatch", "false")));
+        JCheckBox playDrawn = new JCheckBox("Play drawn card: place a playable drawn card or keep it",
+                Boolean.parseBoolean(last.getOrDefault("playDrawn", "false")));
+        JCheckBox callUno = new JCheckBox("Call UNO: forget to call UNO at 2 cards and draw 2",
+                Boolean.parseBoolean(last.getOrDefault("callUno", "false")));
+        JCheckBox stackDraws = new JCheckBox("Stacking: stack +2/+4 cards to pass the penalty on",
+                Boolean.parseBoolean(last.getOrDefault("stackDraws", "false")));
+        JCheckBox sevenZero = new JCheckBox("Seven-Zero: 7 swaps hands, 0 rotates all hands",
+                Boolean.parseBoolean(last.getOrDefault("sevenZero", "false")));
+
+        JPanel form = new JPanel(new GridLayout(0, 1, 4, 4));
+        JPanel handRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        handRow.add(new JLabel("Starting hand size:"));
+        handRow.add(handSize);
+        JPanel playersRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        playersRow.add(new JLabel("Max players:"));
+        playersRow.add(maxPlayers);
+        form.add(handRow);
+        form.add(playersRow);
+        form.add(drawToMatch);
+        form.add(playDrawn);
+        form.add(callUno);
+        form.add(stackDraws);
+        form.add(sevenZero);
+
+        int result = JOptionPane.showConfirmDialog(this, form, "UNO House Rules",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) {
+            return null;
+        }
+        String options = "handSize=" + handSize.getValue()
+                + ";maxPlayers=" + maxPlayers.getValue()
+                + ";drawToMatch=" + drawToMatch.isSelected()
+                + ";playDrawn=" + playDrawn.isSelected()
+                + ";callUno=" + callUno.isSelected()
+                + ";stackDraws=" + stackDraws.isSelected()
+                + ";sevenZero=" + sevenZero.isSelected();
+        lastUnoOptions = options;
+        return options;
+    }
+
     private void renderUno(JPanel board, String[] fields, boolean myTurn) {
-        // fields: started|finished|currentPlayer|topCard|activeColor|hand|players|drawPileSize|message
+        // fields: started|finished|currentPlayer|topCard|activeColor|hand|players|drawPileSize|flags|message
         String topCardToken = fields[3];
         String activeColorStr = fields[4];
         String handStr = fields[5];
         String playersStr = fields[6];
+        String flagsStr = fields.length > 9 ? fields[8] : "";
+        java.util.Set<String> flags = new java.util.HashSet<>(
+                java.util.Arrays.asList(flagsStr.split(",")));
+        boolean pendingDrawn = flags.contains("PLAYDRAWN") && myTurn;
+        String stackFlag = flags.stream().filter(f -> f.startsWith("STACK:"))
+                .findFirst().orElse(null);
 
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(8, 8, 8, 8);
@@ -1117,30 +1387,61 @@ public final class HubClient extends JFrame {
         JLabel playersLabel = styledLabel(formatUnoPlayers(playersStr), FONT_BODY, TEXT_SECONDARY);
         board.add(playersLabel, gbc);
 
+        // Pending stacked draw penalty
+        if (stackFlag != null) {
+            gbc.gridy++;
+            JLabel stackLabel = styledLabel("\u26A0 +" + stackFlag.substring(6)
+                    + " cards pending \u2014 stack a draw card or draw them!",
+                    FONT_BODY, new Color(0xFF, 0x6B, 0x6B));
+            board.add(stackLabel, gbc);
+        }
+
         // Top card
-        gbc.gridy = 1;
+        gbc.gridy++;
         if (!topCardToken.isEmpty()) {
             com.boardgame.model.Card topCard = com.boardgame.model.Card.fromToken(topCardToken);
             JPanel cardPanel = createUnoCardPanel(topCard, activeColorStr, true);
             board.add(cardPanel, gbc);
         }
 
-        // Draw button
-        gbc.gridy = 2;
+        // Action row: draw / keep / play drawn / call UNO
+        gbc.gridy++;
         gbc.gridwidth = 1;
-        JButton drawBtn = accentButton("Draw Card");
-        drawBtn.setEnabled(myTurn);
-        drawBtn.addActionListener(e -> sendCommand("MOVE|DRAW"));
-        board.add(drawBtn, gbc);
-
-        // Wild color selector
-        gbc.gridx = 1;
         JComboBox<String> colorBox = styledComboBox(
                 new String[]{"RED", "YELLOW", "GREEN", "BLUE"});
+        if (pendingDrawn) {
+            JButton playDrawnBtn = accentButton("Play Drawn Card");
+            playDrawnBtn.addActionListener(e -> sendCommand(
+                    "MOVE|PLAYDRAWN|" + colorBox.getSelectedItem()));
+            board.add(playDrawnBtn, gbc);
+            gbc.gridx = 1;
+            JButton keepBtn = accentButton("Keep It");
+            keepBtn.addActionListener(e -> sendCommand("MOVE|KEEP"));
+            board.add(keepBtn, gbc);
+            gbc.gridx = 2;
+        } else {
+            JButton drawBtn = accentButton("Draw Card");
+            drawBtn.setEnabled(myTurn);
+            drawBtn.addActionListener(e -> sendCommand("MOVE|DRAW"));
+            board.add(drawBtn, gbc);
+            gbc.gridx = 1;
+        }
+        if (flags.contains("CANCALLUNO")) {
+            JButton unoBtn = accentButton("\uD83D\uDCE2 Call UNO!");
+            unoBtn.addActionListener(e -> sendCommand("MOVE|CALLUNO"));
+            board.add(unoBtn, gbc);
+            gbc.gridx++;
+        } else if (flags.contains("UNOCALLED")) {
+            board.add(styledLabel("UNO called \u2714", FONT_BODY,
+                    new Color(0x7A, 0xE5, 0x82)), gbc);
+            gbc.gridx++;
+        }
+
+        // Wild color selector
         board.add(colorBox, gbc);
 
         // Hand
-        gbc.gridy = 3;
+        gbc.gridy++;
         gbc.gridx = 0;
         gbc.gridwidth = 5;
         JPanel handPanel = darkPanel(new FlowLayout(FlowLayout.CENTER, 4, 4));
