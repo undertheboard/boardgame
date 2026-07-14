@@ -383,6 +383,36 @@ public final class SpectatorClient extends JFrame {
             int hr = Math.max(4, (int) (Double.parseDouble(hole[2]) * sx));
             g2.setColor(Color.BLACK);
             g2.fillOval(hx - hr, hy - hr, hr * 2, hr * 2);
+            // Power-ups on the course
+            if (puttFields.length > 11 && !puttFields[10].isEmpty()) {
+                for (String entry : puttFields[10].split(";")) {
+                    String[] p = entry.split(":");
+                    int px = (int) (Double.parseDouble(p[1]) * sx);
+                    int py = (int) (Double.parseDouble(p[2]) * sy);
+                    int pr = Math.max(6, (int) (2.0 * sx));
+                    g2.setColor(switch (p[0]) {
+                        case "BLAST" -> new Color(0xFF, 0x8F, 0x00);
+                        case "MAGNET" -> new Color(0x00, 0xBC, 0xD4);
+                        case "SAND" -> new Color(0xD7, 0xB3, 0x77);
+                        case "WOBBLE" -> new Color(0xAB, 0x47, 0xBC);
+                        default -> Color.GRAY;
+                    });
+                    g2.fillOval(px - pr, py - pr, pr * 2, pr * 2);
+                    g2.setColor(Color.WHITE);
+                    g2.drawOval(px - pr, py - pr, pr * 2, pr * 2);
+                    g2.setFont(FONT_BIG);
+                    String letter = p[0].substring(0, 1);
+                    FontMetrics fm = g2.getFontMetrics();
+                    g2.drawString(letter, px - fm.stringWidth(letter) / 2,
+                            py + fm.getAscent() / 2 - 2);
+                }
+            }
+            // Hole progress (e.g. "Hole 3/9")
+            if (puttFields.length > 10 && !puttFields[9].isEmpty()) {
+                g2.setColor(TEXT_PRIMARY);
+                g2.setFont(FONT_BIG);
+                g2.drawString("\u26F3 Hole " + puttFields[9], 10, -12);
+            }
             // Trace of the last shot
             if (puttFields.length > 9 && !puttFields[8].isEmpty()) {
                 g2.setColor(new Color(255, 255, 255, 120));

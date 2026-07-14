@@ -211,8 +211,33 @@ public final class GameRegistry {
                 com.boardgame.games.gomoku.GomokuGame::new);
         registerBuiltin("RPS", "Rock Paper Scissors", "Best of five: first player to three round wins.",
                 com.boardgame.games.rps.RockPaperScissorsGame::new);
-        registerBuiltin("PUTTPUTT", "Putt Putt", "Animated mini golf: bounce off walls, fewest strokes wins.",
-                com.boardgame.games.puttputt.PuttPuttGame::new);
+        register(new GamePlugin() {
+            @Override
+            public String gameType() {
+                return "PUTTPUTT";
+            }
+
+            @Override
+            public String displayName() {
+                return "Putt Putt";
+            }
+
+            @Override
+            public String description() {
+                return "Nine-hole animated mini golf with power-ups: fewest total strokes wins.";
+            }
+
+            @Override
+            public BoardGame createGame() {
+                return new com.boardgame.games.puttputt.PuttPuttGame();
+            }
+
+            @Override
+            public BoardGame createGame(Map<String, String> options) {
+                return new com.boardgame.games.puttputt.PuttPuttGame(
+                        com.boardgame.games.puttputt.PuttPuttRules.fromOptions(options));
+            }
+        });
     }
 
     private static void registerBuiltin(String type, String name, String description,
