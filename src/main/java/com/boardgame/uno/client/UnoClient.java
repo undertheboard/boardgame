@@ -252,8 +252,8 @@ public final class UnoClient extends JFrame {
             if (!servers.isEmpty()) {
                 return servers;
             }
-        } catch (IOException ignored) {
-            // Fall back to a server running on this computer.
+        } catch (IOException exception) {
+            System.err.println("LAN discovery failed: " + exception);
         }
         return List.of(new LanDiscovery.Server("localhost", 8888));
     }

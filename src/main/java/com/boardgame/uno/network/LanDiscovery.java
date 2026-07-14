@@ -26,12 +26,13 @@ public final class LanDiscovery implements AutoCloseable {
     private static final int MAX_PACKET_SIZE = 64;
 
     private final DatagramSocket socket;
+    private final Thread responder;
 
     private LanDiscovery(int gamePort, int discoveryPort) throws SocketException {
         socket = new DatagramSocket(null);
         socket.setReuseAddress(true);
         socket.bind(new InetSocketAddress(discoveryPort));
-        Thread responder = new Thread(() -> respond(gamePort), "uno-lan-discovery");
+        responder = new Thread(() -> respond(gamePort), "uno-lan-discovery");
         responder.setDaemon(true);
         responder.start();
     }
@@ -99,7 +100,7 @@ public final class LanDiscovery implements AutoCloseable {
                 }
             } catch (IOException exception) {
                 if (!socket.isClosed()) {
-                    System.err.println("LAN discovery stopped: " + exception.getMessage());
+                    System.err.println("LAN discovery stopped: " + exception);
                 }
                 return;
             }
@@ -138,6 +139,11 @@ public final class LanDiscovery implements AutoCloseable {
     @Override
     public void close() {
         socket.close();
+        try {
+            responder.join();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     public record Server(String host, int port) {
