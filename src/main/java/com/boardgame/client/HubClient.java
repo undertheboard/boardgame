@@ -132,6 +132,10 @@ public final class HubClient extends JFrame {
     /** Drives all in-game animations (turn glow, confetti, card lifts). */
     private Timer boardAnimTimer;
     private float boardAnimPhase;
+    private static final int ANIMATION_TICK_MS = 30;
+    private static final float ANIMATION_PHASE_INCREMENT = 0.09f;
+    private static final int CONFETTI_PIECE_COUNT = 90;
+    private static final float CARD_LIFT_EASING = 0.3f;
     private String currentGameType = "";
 
     private HubClient(String host, int port) {
@@ -909,8 +913,8 @@ public final class HubClient extends JFrame {
 
     /** Restarts the shared ~33fps animation clock that drives in-game effects. */
     private void startBoardAnimation() {
-        boardAnimTimer = new Timer(30, e -> {
-            boardAnimPhase += 0.09f;
+        boardAnimTimer = new Timer(ANIMATION_TICK_MS, e -> {
+            boardAnimPhase += ANIMATION_PHASE_INCREMENT;
             gamePanel.repaint();
         });
         boardAnimTimer.start();
@@ -968,7 +972,7 @@ public final class HubClient extends JFrame {
     /** End-of-game banner; on a win it rains animated confetti behind the text. */
     private JPanel buildOutcomeBanner(String outcome, Color outcomeColor,
                                       String statusText, boolean won) {
-        final int pieces = 90;
+        final int pieces = CONFETTI_PIECE_COUNT;
         final float[][] confetti = new float[pieces][4]; // x%, speed, drift, size
         final Color[] confettiColors = {new Color(0xFF, 0x52, 0x52), new Color(0xFF, 0xD7, 0x00),
                 new Color(0x69, 0xF0, 0xAE), new Color(0x40, 0xC4, 0xFF), ACCENT};
@@ -1081,7 +1085,7 @@ public final class HubClient extends JFrame {
             case "UNO" -> """
                     Match the top card of the discard pile by color or value.
                     \u2022 Click a card in your hand to play it (bright cards are playable).
-                    \u2022 Wild cards: pick a color from the dropdown first, then click the card.
+                    \u2022 Wild cards: click the card, then pick a color from the popup.
                     \u2022 No playable card? Click the draw pile (or the Draw Card button).
                     \u2022 Skip / Reverse / +2 / +4 change the flow \u2014 watch the spinning
                       direction arrow and the glowing ring showing whose turn it is.
@@ -1920,7 +1924,7 @@ public final class HubClient extends JFrame {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 Object targetProp = getClientProperty("liftTarget");
                 float target = targetProp instanceof Number n ? n.floatValue() : 0f;
-                lift += (target - lift) * 0.3f; // eased by the shared animation clock
+                lift += (target - lift) * CARD_LIFT_EASING; // eased by the shared animation clock
                 g2.translate(0, headroom - lift);
                 Color cardColor = unoAwtColor(card.color());
                 if (card.color() == com.boardgame.model.Card.Color.WILD && activeColor != null && !activeColor.isEmpty()) {
