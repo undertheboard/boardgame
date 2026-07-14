@@ -28,17 +28,21 @@ public final class UserStore {
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     public record UserRecord(String username, String salt, String hash,
-                             String role, String avatarSymbol, String avatarColor) {
+                             String role, String avatarSymbol, String avatarColor,
+                             String title) {
         public String serialize() {
-            return salt + ":" + hash + ":" + role + ":" + avatarSymbol + ":" + avatarColor;
+            return salt + ":" + hash + ":" + role + ":" + avatarSymbol + ":" + avatarColor
+                    + ":" + title;
         }
 
         public static UserRecord deserialize(String username, String value) {
-            String[] parts = value.split(":", 5);
+            String[] parts = value.split(":", 6);
             if (parts.length < 5) {
                 throw new IllegalArgumentException("Invalid user record for: " + username);
             }
-            return new UserRecord(username, parts[0], parts[1], parts[2], parts[3], parts[4]);
+            String title = parts.length >= 6 ? parts[5] : "";
+            return new UserRecord(username, parts[0], parts[1], parts[2], parts[3], parts[4],
+                    title);
         }
     }
 
@@ -112,7 +116,8 @@ public final class UserStore {
         }
     }
 
-    public UserRecord updateCharacter(String username, String symbol, String color) throws IOException {
+    public UserRecord updateCharacter(String username, String symbol, String color,
+                                      String title) throws IOException {
         lock.writeLock().lock();
         try {
             UserRecord record = users.get(username);
@@ -120,7 +125,7 @@ public final class UserStore {
                 throw new IllegalArgumentException("User not found");
             }
             UserRecord updated = new UserRecord(username, record.salt(), record.hash(),
-                    record.role(), symbol, color);
+                    record.role(), symbol, color, title);
             users.put(username, updated);
             save();
             return updated;
@@ -191,7 +196,7 @@ public final class UserStore {
         RANDOM.nextBytes(saltBytes);
         String salt = Base64.getUrlEncoder().withoutPadding().encodeToString(saltBytes);
         String hash = hashPassword(password, saltBytes);
-        return new UserRecord(username, salt, hash, role, symbol, color);
+        return new UserRecord(username, salt, hash, role, symbol, color, "");
     }
 
     static String hashPassword(String password, byte[] saltBytes) {

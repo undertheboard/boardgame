@@ -16,6 +16,7 @@ public final class CheckersGame implements BoardGame {
     private int currentIndex; // 0 = black (top), 1 = white (bottom)
     private boolean started;
     private boolean finished;
+    private String winner;
     private String message = "Waiting for players";
 
     public CheckersGame() {
@@ -107,6 +108,7 @@ public final class CheckersGame implements BoardGame {
         // Check win
         if (!hasAnyPieces(1 - currentIndex) || !hasAnyMoves(1 - currentIndex)) {
             finished = true;
+            winner = playerId;
             message = playerId + " wins!";
         } else {
             currentIndex = 1 - currentIndex;
@@ -242,6 +244,11 @@ public final class CheckersGame implements BoardGame {
     @Override
     public synchronized boolean isFinished() {
         return finished;
+    }
+
+    @Override
+    public synchronized String winner() {
+        return winner;
     }
 
     @Override

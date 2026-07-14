@@ -23,6 +23,7 @@ public final class DotsAndBoxesGame implements BoardGame {
     private int currentIndex;
     private boolean started;
     private boolean finished;
+    private String matchWinner;
     private String message = "Waiting for players";
     private int totalLinesDrawn;
     private final int totalLines;
@@ -157,6 +158,7 @@ public final class DotsAndBoxesGame implements BoardGame {
         if (tie) {
             return "Draw!";
         }
+        matchWinner = winner;
         return winner + " wins with " + maxScore + " boxes!";
     }
 
@@ -215,6 +217,11 @@ public final class DotsAndBoxesGame implements BoardGame {
     @Override
     public synchronized boolean isFinished() {
         return finished;
+    }
+
+    @Override
+    public synchronized String winner() {
+        return matchWinner;
     }
 
     @Override

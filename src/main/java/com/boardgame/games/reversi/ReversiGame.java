@@ -15,6 +15,7 @@ public final class ReversiGame implements BoardGame {
     private int currentIndex; // 0=Black, 1=White
     private boolean started;
     private boolean finished;
+    private String winner;
     private String message = "Waiting for players";
     private int consecutivePasses;
 
@@ -119,8 +120,10 @@ public final class ReversiGame implements BoardGame {
             }
         }
         if (black > white) {
+            winner = playerList.get(0);
             message = playerList.get(0) + " wins! (Black " + black + "-" + white + ")";
         } else if (white > black) {
+            winner = playerList.get(1);
             message = playerList.get(1) + " wins! (White " + white + "-" + black + ")";
         } else {
             message = "Draw! (" + black + "-" + white + ")";
@@ -192,6 +195,11 @@ public final class ReversiGame implements BoardGame {
     @Override
     public synchronized boolean isFinished() {
         return finished;
+    }
+
+    @Override
+    public synchronized String winner() {
+        return winner;
     }
 
     @Override

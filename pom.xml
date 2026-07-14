@@ -58,8 +58,10 @@
                 <include>com/boardgame/games/**</include>
                 <include>com/boardgame/model/**</include>
                 <include>com/boardgame/network/**</include>
+                <include>com/boardgame/plugin/**</include>
                 <include>com/boardgame/protocol/**</include>
                 <include>com/boardgame/server/**</include>
+                <include>com/boardgame/stats/**</include>
                 <include>server.properties</include>
               </includes>
               <archive>
@@ -86,6 +88,27 @@
               <archive>
                 <manifest>
                   <mainClass>com.boardgame.client.HubClient</mainClass>
+                </manifest>
+              </archive>
+            </configuration>
+          </execution>
+          <execution>
+            <id>spectator-jar</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <classifier>spectator</classifier>
+              <includes>
+                <include>com/boardgame/client/**</include>
+                <include>com/boardgame/model/**</include>
+                <include>com/boardgame/network/**</include>
+                <include>com/boardgame/protocol/**</include>
+              </includes>
+              <archive>
+                <manifest>
+                  <mainClass>com.boardgame.client.SpectatorClient</mainClass>
                 </manifest>
               </archive>
             </configuration>

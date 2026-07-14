@@ -91,9 +91,10 @@ class UserStoreTest {
         UserStore store = new UserStore(tempDir.resolve("users.properties"));
         store.load();
         store.register("charuser", "pass");
-        store.updateCharacter("charuser", "\u2665", "FF0000");
+        store.updateCharacter("charuser", "\u2665", "FF0000", "Strategist");
         UserStore.UserRecord record = store.getUser("charuser");
         assertEquals("\u2665", record.avatarSymbol());
         assertEquals("FF0000", record.avatarColor());
+        assertEquals("Strategist", record.title());
     }
 }
