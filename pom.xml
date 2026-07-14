@@ -3,10 +3,10 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>com.boardgame.uno</groupId>
+  <groupId>com.boardgame</groupId>
   <artifactId>boardgame</artifactId>
   <version>1.0-SNAPSHOT</version>
-  <name>Animated Uno</name>
+  <name>Board Game Hub</name>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -54,16 +54,17 @@
             <configuration>
               <classifier>server</classifier>
               <includes>
-                <include>com/boardgame/uno/game/**</include>
-                <include>com/boardgame/uno/model/**</include>
-                <include>com/boardgame/uno/network/**</include>
-                <include>com/boardgame/uno/protocol/**</include>
-                <include>com/boardgame/uno/server/**</include>
+                <include>com/boardgame/auth/**</include>
+                <include>com/boardgame/games/**</include>
+                <include>com/boardgame/model/**</include>
+                <include>com/boardgame/network/**</include>
+                <include>com/boardgame/protocol/**</include>
+                <include>com/boardgame/server/**</include>
                 <include>server.properties</include>
               </includes>
               <archive>
                 <manifest>
-                  <mainClass>com.boardgame.uno.server.UnoServer</mainClass>
+                  <mainClass>com.boardgame.server.HubServer</mainClass>
                 </manifest>
               </archive>
             </configuration>
@@ -77,15 +78,14 @@
             <configuration>
               <classifier>client</classifier>
               <includes>
-                <include>com/boardgame/uno/client/**</include>
-                <include>com/boardgame/uno/game/**</include>
-                <include>com/boardgame/uno/model/**</include>
-                <include>com/boardgame/uno/network/**</include>
-                <include>com/boardgame/uno/protocol/**</include>
+                <include>com/boardgame/client/**</include>
+                <include>com/boardgame/model/**</include>
+                <include>com/boardgame/network/**</include>
+                <include>com/boardgame/protocol/**</include>
               </includes>
               <archive>
                 <manifest>
-                  <mainClass>com.boardgame.uno.client.UnoClient</mainClass>
+                  <mainClass>com.boardgame.client.HubClient</mainClass>
                 </manifest>
               </archive>
             </configuration>
