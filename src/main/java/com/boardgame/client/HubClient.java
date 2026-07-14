@@ -290,9 +290,14 @@ public final class HubClient extends JFrame {
 
         JLabel title = styledLabel("\u265B Board Game Hub — Lobby", FONT_HEADER, TEXT_PRIMARY);
         lobbyStatus = styledLabel("Welcome!", FONT_BODY, TEXT_SECONDARY);
+        JButton customizeBtn = accentButton("Customize");
+        customizeBtn.addActionListener(e -> cardLayout.show(mainPanel, "character"));
+        JPanel headerRight = darkPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0));
+        headerRight.add(lobbyStatus);
+        headerRight.add(customizeBtn);
         JPanel header = darkPanel(new BorderLayout());
         header.add(title, BorderLayout.WEST);
-        header.add(lobbyStatus, BorderLayout.EAST);
+        header.add(headerRight, BorderLayout.EAST);
         panel.add(header, BorderLayout.NORTH);
 
         // Rooms list
@@ -406,7 +411,8 @@ public final class HubClient extends JFrame {
                 role = Protocol.decode(parts[2]);
                 selectedSymbol = Protocol.decode(parts[3]);
                 selectedColor = parts[4];
-                cardLayout.show(mainPanel, "lobby");
+                updateCharPreview();
+                cardLayout.show(mainPanel, "character");
                 sendCommand("LIST");
             }
             case "OK" -> {
