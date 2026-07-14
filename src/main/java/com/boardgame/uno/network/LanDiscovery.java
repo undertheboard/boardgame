@@ -11,6 +11,7 @@ import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
@@ -125,15 +126,9 @@ public final class LanDiscovery implements AutoCloseable {
     }
 
     private static boolean matches(DatagramPacket packet, byte[] expected) {
-        if (packet.getLength() != expected.length) {
-            return false;
-        }
-        for (int i = 0; i < expected.length; i++) {
-            if (packet.getData()[packet.getOffset() + i] != expected[i]) {
-                return false;
-            }
-        }
-        return true;
+        return packet.getLength() == expected.length
+                && Arrays.equals(packet.getData(), packet.getOffset(),
+                packet.getOffset() + packet.getLength(), expected, 0, expected.length);
     }
 
     @Override
