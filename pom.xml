@@ -40,6 +40,58 @@
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.5.0</version>
       </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <executions>
+          <execution>
+            <id>server-jar</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <classifier>server</classifier>
+              <includes>
+                <include>com/boardgame/uno/game/**</include>
+                <include>com/boardgame/uno/model/**</include>
+                <include>com/boardgame/uno/network/**</include>
+                <include>com/boardgame/uno/protocol/**</include>
+                <include>com/boardgame/uno/server/**</include>
+                <include>server.properties</include>
+              </includes>
+              <archive>
+                <manifest>
+                  <mainClass>com.boardgame.uno.server.UnoServer</mainClass>
+                </manifest>
+              </archive>
+            </configuration>
+          </execution>
+          <execution>
+            <id>client-jar</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <classifier>client</classifier>
+              <includes>
+                <include>com/boardgame/uno/client/**</include>
+                <include>com/boardgame/uno/game/**</include>
+                <include>com/boardgame/uno/model/**</include>
+                <include>com/boardgame/uno/network/**</include>
+                <include>com/boardgame/uno/protocol/**</include>
+              </includes>
+              <archive>
+                <manifest>
+                  <mainClass>com.boardgame.uno.client.UnoClient</mainClass>
+                </manifest>
+              </archive>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
   </build>
 </project>

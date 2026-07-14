@@ -6,7 +6,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
 
-public record ServerConfig(String host, int port, int minPlayers, int maxPlayers, int startingHandSize) {
+public record ServerConfig(String host, int port, int discoveryPort, int minPlayers,
+                           int maxPlayers, int startingHandSize) {
     public static ServerConfig load(Path override) throws IOException {
         Properties values = new Properties();
         try (InputStream defaults = ServerConfig.class.getResourceAsStream("/server.properties")) {
@@ -22,6 +23,7 @@ public record ServerConfig(String host, int port, int minPlayers, int maxPlayers
         }
         return new ServerConfig(values.getProperty("host"),
                 integer(values, "port", 1, 65535),
+                integer(values, "discoveryPort", 1, 65535),
                 integer(values, "minPlayers", 2, 10),
                 integer(values, "maxPlayers", 2, 10),
                 integer(values, "startingHandSize", 1, 20));

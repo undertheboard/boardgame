@@ -2,6 +2,7 @@ package com.boardgame.uno.client;
 
 import com.boardgame.uno.model.Card;
 import com.boardgame.uno.model.Card.Color;
+import com.boardgame.uno.network.LanDiscovery;
 import com.boardgame.uno.protocol.Protocol;
 
 import javax.swing.BorderFactory;
@@ -228,14 +229,41 @@ public final class UnoClient extends JFrame {
     }
 
     public static void main(String[] args) {
-        String host = args.length > 0 ? args[0] : "localhost";
-        int port = args.length > 1 ? Integer.parseInt(args[1]) : 8888;
+        List<LanDiscovery.Server> servers = args.length > 0
+                ? List.of(new LanDiscovery.Server(
+                        args[0], args.length > 1 ? Integer.parseInt(args[1]) : 8888))
+                : discoverServers();
         SwingUtilities.invokeLater(() -> {
+            LanDiscovery.Server selected = chooseServer(servers);
+            if (selected == null) {
+                return;
+            }
             String name = JOptionPane.showInputDialog(null, "Player name:", "Join UNO",
                     JOptionPane.QUESTION_MESSAGE);
             if (name != null && !name.isBlank()) {
-                new UnoClient(host, port, name.strip()).setVisible(true);
+                new UnoClient(selected.host(), selected.port(), name.strip()).setVisible(true);
             }
         });
+    }
+
+    private static List<LanDiscovery.Server> discoverServers() {
+        try {
+            List<LanDiscovery.Server> servers = LanDiscovery.discover(LanDiscovery.DEFAULT_PORT, 750);
+            if (!servers.isEmpty()) {
+                return servers;
+            }
+        } catch (IOException ignored) {
+            // Fall back to a server running on this computer.
+        }
+        return List.of(new LanDiscovery.Server("localhost", 8888));
+    }
+
+    private static LanDiscovery.Server chooseServer(List<LanDiscovery.Server> servers) {
+        if (servers.size() == 1) {
+            return servers.get(0);
+        }
+        return (LanDiscovery.Server) JOptionPane.showInputDialog(null,
+                "Choose a game server:", "Join UNO", JOptionPane.QUESTION_MESSAGE,
+                null, servers.toArray(), servers.get(0));
     }
 }

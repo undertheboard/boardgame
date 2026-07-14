@@ -2,6 +2,7 @@ package com.boardgame.uno.server;
 
 import com.boardgame.uno.game.UnoGame;
 import com.boardgame.uno.model.Card.Color;
+import com.boardgame.uno.network.LanDiscovery;
 import com.boardgame.uno.protocol.Protocol;
 
 import java.io.BufferedReader;
@@ -37,10 +38,14 @@ public final class UnoServer implements AutoCloseable {
         serverSocket = new ServerSocket(config.port(), config.maxPlayers(),
                 InetAddress.getByName(config.host()));
         System.out.printf("Uno server listening on %s:%d%n", config.host(), config.port());
-        while (!serverSocket.isClosed()) {
-            Socket socket = serverSocket.accept();
-            socket.setSoTimeout(300_000);
-            pool.submit(new ClientSession(socket));
+        try (LanDiscovery ignored = LanDiscovery.advertise(
+                config.port(), config.discoveryPort())) {
+            System.out.printf("LAN discovery listening on UDP port %d%n", config.discoveryPort());
+            while (!serverSocket.isClosed()) {
+                Socket socket = serverSocket.accept();
+                socket.setSoTimeout(300_000);
+                pool.submit(new ClientSession(socket));
+            }
         }
     }
 
