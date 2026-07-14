@@ -224,8 +224,6 @@ public final class PuttPuttGame implements BoardGame {
                     angleDeg += (random.nextDouble() * 2 - 1) * 20;
                     effectNote = " [WOBBLE veer!]";
                 }
-                default -> {
-                }
             }
         }
         double angleRad = Math.toRadians(angleDeg);
@@ -325,8 +323,6 @@ public final class PuttPuttGame implements BoardGame {
                     other.pendingEffect = type;
                 }
             });
-            default -> {
-            }
         }
     }
 
