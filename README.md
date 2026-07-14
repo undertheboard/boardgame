@@ -28,18 +28,20 @@ Produces:
 - `target/boardgame-1.0-SNAPSHOT-server.jar` — Hub server
 - `target/boardgame-1.0-SNAPSHOT-client.jar` — Hub client
 
+Prebuilt copies are committed as `dist/hub-server.jar` and `dist/hub-client.jar`.
+
 ## Run
 
 ### Server
 
 ```bash
-java -jar target/boardgame-1.0-SNAPSHOT-server.jar [path/to/override.properties]
+java -jar dist/hub-server.jar [path/to/override.properties]
 ```
 
 ### Client
 
 ```bash
-java -jar target/boardgame-1.0-SNAPSHOT-client.jar [host [port]]
+java -jar dist/hub-client.jar [host [port]]
 ```
 
 The client auto-discovers servers on the LAN via UDP broadcast (port 8889). If no server is found, it falls back to `localhost:8888`.

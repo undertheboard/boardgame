@@ -6,11 +6,13 @@ import com.boardgame.protocol.Protocol;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
@@ -23,6 +25,7 @@ import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -325,10 +328,8 @@ public final class HubClient extends JFrame {
         gc.fill = GridBagConstraints.HORIZONTAL;
         gc.gridx = 0;
         gc.gridy = 0;
-        JComboBox<String> gameTypeBox = new JComboBox<>(new String[]{
+        JComboBox<String> gameTypeBox = styledComboBox(new String[]{
                 "UNO", "TICTACTOE", "CONNECTFOUR", "CHECKERS", "REVERSI", "DOTSANDBOXES"});
-        gameTypeBox.setBackground(BG_INPUT);
-        gameTypeBox.setForeground(TEXT_PRIMARY);
         createPanel.add(gameTypeBox, gc);
         gc.gridy = 1;
         JTextField roomNameField = styledTextField(12);
@@ -390,6 +391,14 @@ public final class HubClient extends JFrame {
     }
 
     private void receive(String line) {
+        try {
+            handleMessage(line);
+        } catch (RuntimeException exception) {
+            lobbyStatus.setText("Received invalid data from server");
+        }
+    }
+
+    private void handleMessage(String line) {
         String[] parts = line.split("\\|", -1);
         switch (parts[0]) {
             case "WELCOME" -> {
@@ -403,8 +412,8 @@ public final class HubClient extends JFrame {
             case "OK" -> {
                 String msg = parts.length > 1 ? Protocol.decode(parts[1]) : "OK";
                 if (msg.startsWith("room-")) {
-                    // Room created
-                    sendCommand("LIST");
+                    // Room created — join it right away
+                    sendCommand("JOINROOM|" + msg);
                 } else if (msg.startsWith("Joined")) {
                     cardLayout.show(mainPanel, "game");
                 } else if (msg.equals("Character updated")) {
@@ -748,9 +757,8 @@ public final class HubClient extends JFrame {
 
         // Wild color selector
         gbc.gridx = 1;
-        JComboBox<String> colorBox = new JComboBox<>(new String[]{"RED", "YELLOW", "GREEN", "BLUE"});
-        colorBox.setBackground(BG_INPUT);
-        colorBox.setForeground(TEXT_PRIMARY);
+        JComboBox<String> colorBox = styledComboBox(
+                new String[]{"RED", "YELLOW", "GREEN", "BLUE"});
         board.add(colorBox, gbc);
 
         // Hand
@@ -948,6 +956,54 @@ public final class HubClient extends JFrame {
                 BorderFactory.createLineBorder(BG_INPUT.brighter(), 1),
                 BorderFactory.createEmptyBorder(8, 12, 8, 12)));
         return field;
+    }
+
+    private static JComboBox<String> styledComboBox(String[] items) {
+        JComboBox<String> box = new JComboBox<>(items);
+        box.setBackground(BG_INPUT);
+        box.setForeground(TEXT_PRIMARY);
+        box.setFont(FONT_BODY);
+        box.setBorder(BorderFactory.createLineBorder(BG_INPUT.brighter(), 1));
+        box.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        box.setUI(new javax.swing.plaf.basic.BasicComboBoxUI() {
+            @Override
+            protected JButton createArrowButton() {
+                JButton arrow = new JButton() {
+                    @Override
+                    protected void paintComponent(Graphics g) {
+                        Graphics2D g2 = (Graphics2D) g.create();
+                        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                                RenderingHints.VALUE_ANTIALIAS_ON);
+                        g2.setColor(BG_INPUT);
+                        g2.fillRect(0, 0, getWidth(), getHeight());
+                        g2.setColor(ACCENT);
+                        int cx = getWidth() / 2;
+                        int cy = getHeight() / 2;
+                        g2.fillPolygon(new int[]{cx - 4, cx + 4, cx},
+                                new int[]{cy - 2, cy - 2, cy + 4}, 3);
+                        g2.dispose();
+                    }
+                };
+                arrow.setBorder(BorderFactory.createEmptyBorder());
+                arrow.setContentAreaFilled(false);
+                arrow.setFocusPainted(false);
+                return arrow;
+            }
+        });
+        box.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value,
+                    int index, boolean isSelected, boolean cellHasFocus) {
+                JLabel label = (JLabel) super.getListCellRendererComponent(
+                        list, value, index, isSelected, cellHasFocus);
+                label.setBackground(isSelected ? ACCENT : BG_INPUT);
+                label.setForeground(isSelected ? Color.WHITE : TEXT_PRIMARY);
+                label.setFont(FONT_BODY);
+                label.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
+                return label;
+            }
+        });
+        return box;
     }
 
     private static JButton accentButton(String text) {

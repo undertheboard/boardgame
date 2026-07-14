@@ -175,7 +175,7 @@ public final class HubServer implements AutoCloseable {
             String user = Protocol.decode(parts[1]);
             String pass = Protocol.decode(parts[2]);
             userStore.register(user, pass);
-            send("OK|Registered successfully");
+            send("OK|" + Protocol.encode("Registered successfully"));
         }
 
         private void handleLogin(String[] parts) {
@@ -215,7 +215,7 @@ public final class HubServer implements AutoCloseable {
             userStore.updateCharacter(username, symbol, color);
             avatarSymbol = symbol;
             avatarColor = color;
-            send("OK|Character updated");
+            send("OK|" + Protocol.encode("Character updated"));
             broadcastLobby();
         }
 
@@ -241,7 +241,7 @@ public final class HubServer implements AutoCloseable {
             String roomId = "room-" + roomCounter.incrementAndGet();
             Room room = new Room(roomId, roomName, game);
             rooms.put(roomId, room);
-            send("OK|" + roomId);
+            send("OK|" + Protocol.encode(roomId));
             broadcastLobby();
         }
 
@@ -260,7 +260,7 @@ public final class HubServer implements AutoCloseable {
             }
             room.game().addPlayer(username);
             currentRoom = room;
-            send("OK|Joined " + room.name());
+            send("OK|" + Protocol.encode("Joined " + room.name()));
             broadcastRoom(room);
             broadcastLobby();
         }
@@ -271,7 +271,7 @@ public final class HubServer implements AutoCloseable {
                 throw new IllegalStateException("Not in a room");
             }
             leaveCurrentRoom();
-            send("OK|Left room");
+            send("OK|" + Protocol.encode("Left room"));
             broadcastLobby();
         }
 
@@ -320,7 +320,7 @@ public final class HubServer implements AutoCloseable {
             } catch (IOException ignored) {
                 // already closing
             }
-            send("OK|Kicked " + target);
+            send("OK|" + Protocol.encode("Kicked " + target));
         }
 
         private void handleDeleteUser(String[] parts) throws IOException {
@@ -346,7 +346,7 @@ public final class HubServer implements AutoCloseable {
                     // closing
                 }
             }
-            send("OK|Deleted " + target);
+            send("OK|" + Protocol.encode("Deleted " + target));
         }
 
         private void requireAuth() {
