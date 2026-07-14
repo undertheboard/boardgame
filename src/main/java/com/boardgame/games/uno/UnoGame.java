@@ -25,7 +25,8 @@ public final class UnoGame implements BoardGame {
      *              playable card and must play or keep it), {@code STACK:n}
      *              (a stacked draw penalty of n cards is pending),
      *              {@code CANCALLUNO} (the requesting player may call UNO now),
-     *              {@code UNOCALLED} (the requesting player has called UNO).
+     *              {@code UNOCALLED} (the requesting player has called UNO),
+     *              {@code DIR:CW} / {@code DIR:CCW} (current direction of play).
      */
     public record Snapshot(boolean started, boolean finished, String currentPlayer, Card topCard,
                            Color activeColor, List<Card> hand, Map<String, Integer> handSizes,
@@ -195,6 +196,7 @@ public final class UnoGame implements BoardGame {
         if (!started || finished) {
             return "";
         }
+        flags.add(direction > 0 ? "DIR:CW" : "DIR:CCW");
         if (pendingDrawnIndex >= 0 && currentPlayer().equals(playerId)) {
             flags.add("PLAYDRAWN");
         }

@@ -129,6 +129,10 @@ public final class HubClient extends JFrame {
     private JTextArea chatArea;
     private Timer waitingTimer;
     private float waitingPhase;
+    /** Drives all in-game animations (turn glow, confetti, card lifts). */
+    private Timer boardAnimTimer;
+    private float boardAnimPhase;
+    private String currentGameType = "";
 
     private HubClient(String host, int port) {
         super("Board Game Hub");
@@ -441,9 +445,16 @@ public final class HubClient extends JFrame {
             cardLayout.show(mainPanel, "lobby");
             sendCommand("LIST");
         });
+        JButton helpBtn = accentButton("?");
+        helpBtn.setToolTipText("How to play");
+        helpBtn.setPreferredSize(new Dimension(40, 32));
+        helpBtn.addActionListener(e -> showHowToPlay());
         JPanel top = darkPanel(new BorderLayout());
         top.add(gameStatus, BorderLayout.CENTER);
-        top.add(leaveBtn, BorderLayout.EAST);
+        JPanel topRight = darkPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        topRight.add(helpBtn);
+        topRight.add(leaveBtn);
+        top.add(topRight, BorderLayout.EAST);
         panel.add(top, BorderLayout.NORTH);
 
         gamePanel = darkPanel(new BorderLayout());
@@ -803,6 +814,7 @@ public final class HubClient extends JFrame {
         // parts[0]="GAMESTATE", parts[1]=gameType, rest is game-specific snapshot
         if (parts.length < 3) return;
         String gameType = parts[1];
+        currentGameType = gameType;
         String snapshotData = String.join("|", java.util.Arrays.copyOfRange(parts, 2, parts.length));
         String[] fields = snapshotData.split("\\|", -1);
         if (fields.length < 3) return;
@@ -851,11 +863,15 @@ public final class HubClient extends JFrame {
         }
 
         gamePanel.add(board, BorderLayout.CENTER);
+        if (!finished) {
+            gamePanel.add(buildTurnBanner(myTurn, currentPlayer), BorderLayout.NORTH);
+        }
         if (finished) {
             String outcome;
             Color outcomeColor;
             String lower = statusText.toLowerCase();
-            if (lower.startsWith(username.toLowerCase()) && lower.contains("win")) {
+            boolean won = lower.startsWith(username.toLowerCase()) && lower.contains("win");
+            if (won) {
                 outcome = "\uD83C\uDFC6 YOU WIN!";
                 outcomeColor = new Color(0xFF, 0xD7, 0x00);
             } else if (lower.contains("wins")) {
@@ -865,16 +881,8 @@ public final class HubClient extends JFrame {
                 outcome = "\uD83C\uDFC1 GAME OVER";
                 outcomeColor = TEXT_PRIMARY;
             }
-            JPanel bannerPanel = darkPanel(new GridLayout(0, 1, 0, 2));
-            JLabel banner = new JLabel(outcome, SwingConstants.CENTER);
-            banner.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 42));
-            banner.setForeground(outcomeColor);
-            JLabel detail = new JLabel(statusText, SwingConstants.CENTER);
-            detail.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
-            detail.setForeground(TEXT_PRIMARY);
-            bannerPanel.add(banner);
-            bannerPanel.add(detail);
-            gamePanel.add(bannerPanel, BorderLayout.NORTH);
+            gamePanel.add(buildOutcomeBanner(outcome, outcomeColor, statusText, won),
+                    BorderLayout.NORTH);
 
             JButton againBtn = accentButton("\uD83D\uDD01 Play Again");
             againBtn.addActionListener(e -> sendCommand("PLAYAGAIN"));
@@ -894,8 +902,129 @@ public final class HubClient extends JFrame {
                     FONT_BODY, TEXT_SECONDARY));
             gamePanel.add(againRow, BorderLayout.SOUTH);
         }
+        startBoardAnimation();
         gamePanel.revalidate();
         gamePanel.repaint();
+    }
+
+    /** Restarts the shared ~33fps animation clock that drives in-game effects. */
+    private void startBoardAnimation() {
+        boardAnimTimer = new Timer(30, e -> {
+            boardAnimPhase += 0.09f;
+            gamePanel.repaint();
+        });
+        boardAnimTimer.start();
+    }
+
+    /**
+     * Banner above the board making the turn unmissable: a pulsing golden
+     * pill when it is your turn, a subdued "waiting" pill otherwise.
+     */
+    private JPanel buildTurnBanner(boolean myTurn, String currentPlayer) {
+        String text = myTurn ? "\uD83D\uDD25 YOUR TURN \u2014 make your move!"
+                : "\u23F3 Waiting for " + currentPlayer + "\u2026";
+        JPanel banner = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setFont(new Font("SansSerif", Font.BOLD, myTurn ? 22 : 16));
+                FontMetrics fm = g2.getFontMetrics();
+                int pillW = fm.stringWidth(text) + 48;
+                int pillH = getHeight() - 12;
+                int x = (getWidth() - pillW) / 2;
+                int y = 6;
+                float pulse = 0.5f + 0.5f * (float) Math.sin(boardAnimPhase * 2);
+                if (myTurn) {
+                    // Soft expanding glow behind the pill
+                    for (int i = 4; i >= 1; i--) {
+                        g2.setColor(new Color(255, 200, 0, (int) (12 + pulse * 12)));
+                        g2.fillRoundRect(x - i * 3, y - i * 2, pillW + i * 6,
+                                pillH + i * 4, pillH, pillH);
+                    }
+                    g2.setPaint(new GradientPaint(x, y, new Color(0xFF, 0xB3, 0x00),
+                            x, y + pillH, new Color(0xFF, 0x6F, 0x00)));
+                    g2.fillRoundRect(x, y, pillW, pillH, pillH, pillH);
+                    g2.setColor(new Color(255, 255, 255, (int) (120 + pulse * 135)));
+                    g2.setStroke(new BasicStroke(2.5f));
+                    g2.drawRoundRect(x, y, pillW, pillH, pillH, pillH);
+                    g2.setColor(new Color(0x33, 0x1A, 0x00));
+                } else {
+                    g2.setColor(BG_INPUT);
+                    g2.fillRoundRect(x, y, pillW, pillH, pillH, pillH);
+                    g2.setColor(TEXT_SECONDARY);
+                }
+                g2.drawString(text, x + 24,
+                        y + (pillH + fm.getAscent() - fm.getDescent()) / 2);
+                g2.dispose();
+            }
+        };
+        banner.setOpaque(false);
+        banner.setPreferredSize(new Dimension(0, myTurn ? 56 : 44));
+        return banner;
+    }
+
+    /** End-of-game banner; on a win it rains animated confetti behind the text. */
+    private JPanel buildOutcomeBanner(String outcome, Color outcomeColor,
+                                      String statusText, boolean won) {
+        final int pieces = 90;
+        final float[][] confetti = new float[pieces][4]; // x%, speed, drift, size
+        final Color[] confettiColors = {new Color(0xFF, 0x52, 0x52), new Color(0xFF, 0xD7, 0x00),
+                new Color(0x69, 0xF0, 0xAE), new Color(0x40, 0xC4, 0xFF), ACCENT};
+        java.util.Random rnd = new java.util.Random();
+        for (float[] p : confetti) {
+            p[0] = rnd.nextFloat();
+            p[1] = 0.4f + rnd.nextFloat() * 0.9f;
+            p[2] = rnd.nextFloat() * 6.28f;
+            p[3] = 4 + rnd.nextFloat() * 5;
+        }
+        JPanel bannerPanel = new JPanel(new GridLayout(0, 1, 0, 2)) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                if (!won) {
+                    return;
+                }
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                for (int i = 0; i < pieces; i++) {
+                    float[] p = confetti[i];
+                    float fall = (boardAnimPhase * p[1] * 18 + i * 13) % (getHeight() + 20);
+                    int px = (int) (p[0] * getWidth()
+                            + Math.sin(boardAnimPhase * 1.5 + p[2]) * 14);
+                    g2.setColor(confettiColors[i % confettiColors.length]);
+                    g2.rotate(boardAnimPhase * p[1] * 2 + p[2], px, fall - 10);
+                    g2.fillRect(px - (int) (p[3] / 2), (int) (fall - 10 - p[3] / 2),
+                            (int) p[3], (int) (p[3] * 0.6f));
+                    g2.rotate(-(boardAnimPhase * p[1] * 2 + p[2]), px, fall - 10);
+                }
+                g2.dispose();
+            }
+        };
+        bannerPanel.setBackground(BG_DARK);
+        bannerPanel.setPreferredSize(new Dimension(0, 100));
+        JLabel banner = new JLabel(outcome, SwingConstants.CENTER) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                float pulse = won ? 1f + 0.05f * (float) Math.sin(boardAnimPhase * 2) : 1f;
+                setFont(getFont().deriveFont(42f * pulse));
+                super.paintComponent(g2);
+                g2.dispose();
+            }
+        };
+        banner.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 42));
+        banner.setForeground(outcomeColor);
+        banner.setOpaque(false);
+        JLabel detail = new JLabel(statusText, SwingConstants.CENTER);
+        detail.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
+        detail.setForeground(TEXT_PRIMARY);
+        detail.setOpaque(false);
+        bannerPanel.add(banner);
+        bannerPanel.add(detail);
+        return bannerPanel;
     }
 
     /** Full-panel "waiting for players" screen with a gently pulsing hourglass. */
@@ -940,6 +1069,72 @@ public final class HubClient extends JFrame {
             waitingTimer.stop();
             waitingTimer = null;
         }
+        if (boardAnimTimer != null) {
+            boardAnimTimer.stop();
+            boardAnimTimer = null;
+        }
+    }
+
+    /** Shows game rules for the current game in a scrollable dialog. */
+    private void showHowToPlay() {
+        String rules = switch (currentGameType) {
+            case "UNO" -> """
+                    Match the top card of the discard pile by color or value.
+                    \u2022 Click a card in your hand to play it (bright cards are playable).
+                    \u2022 Wild cards: pick a color from the dropdown first, then click the card.
+                    \u2022 No playable card? Click the draw pile (or the Draw Card button).
+                    \u2022 Skip / Reverse / +2 / +4 change the flow \u2014 watch the spinning
+                      direction arrow and the glowing ring showing whose turn it is.
+                    \u2022 First player to empty their hand wins!
+                    House rules (chosen when the room was created) may add: stacking
+                    +2/+4 penalties, playing a just-drawn card, calling UNO at 2 cards,
+                    drawing until you can play, and 7/0 hand swapping.""";
+            case "TICTACTOE" -> """
+                    Take turns placing your mark on the 3\u00D73 grid.
+                    Get three in a row (across, down or diagonal) to win.""";
+            case "CONNECTFOUR" -> """
+                    Take turns dropping discs into a column (click \u25BC).
+                    Connect four of your discs in a row \u2014 horizontally,
+                    vertically or diagonally \u2014 to win.""";
+            case "CHECKERS" -> """
+                    Move your pieces diagonally forward one square.
+                    Jump over an opponent's piece to capture it.
+                    Reach the far side to crown a king, which moves both ways.
+                    Capture all opposing pieces to win.""";
+            case "REVERSI" -> """
+                    Place a disc so it brackets a line of opposing discs;
+                    everything in between flips to your color.
+                    When no one can move, the player with more discs wins.""";
+            case "GOMOKU" -> """
+                    Take turns placing stones on the board.
+                    The first player to line up five stones in a row wins.""";
+            case "DOTSANDBOXES" -> """
+                    Take turns drawing one line between two adjacent dots.
+                    Complete the fourth side of a box to claim it and move again.
+                    Most boxes when the grid is full wins.""";
+            case "RPS" -> """
+                    Pick Rock, Paper or Scissors each round.
+                    Rock beats Scissors, Scissors beats Paper, Paper beats Rock.""";
+            case "PUTTPUTT" -> """
+                    Aim and set the power, then take your shot.
+                    Bounce off walls and sink the ball in the fewest strokes.""";
+            default -> "Take turns making moves. The status bar at the top tells\n"
+                    + "you whose turn it is and what happened last.";
+        };
+        JTextArea area = new JTextArea(rules);
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setFont(FONT_BODY);
+        area.setBackground(BG_CARD);
+        area.setForeground(TEXT_PRIMARY);
+        area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        JScrollPane scroll = new JScrollPane(area);
+        scroll.setPreferredSize(new Dimension(460, 300));
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        JOptionPane.showMessageDialog(this, scroll,
+                "\u2753 How to Play" + (currentGameType.isEmpty() ? "" : " \u2014 " + currentGameType),
+                JOptionPane.PLAIN_MESSAGE);
     }
 
     private void renderTicTacToe(JPanel board, String[] fields, boolean myTurn) {
@@ -1366,16 +1561,28 @@ public final class HubClient extends JFrame {
 
     private void renderUno(JPanel board, String[] fields, boolean myTurn) {
         // fields: started|finished|currentPlayer|topCard|activeColor|hand|players|drawPileSize|flags|message
+        String currentPlayer = Protocol.decode(fields[2]);
         String topCardToken = fields[3];
         String activeColorStr = fields[4];
         String handStr = fields[5];
         String playersStr = fields[6];
+        int drawPileSize = 0;
+        try {
+            drawPileSize = Integer.parseInt(fields[7]);
+        } catch (NumberFormatException ignored) {
+            // Older servers may not send the pile size
+        }
         String flagsStr = fields.length > 9 ? fields[8] : "";
         java.util.Set<String> flags = new java.util.HashSet<>(
                 java.util.Arrays.asList(flagsStr.split(",")));
         boolean pendingDrawn = flags.contains("PLAYDRAWN") && myTurn;
         String stackFlag = flags.stream().filter(f -> f.startsWith("STACK:"))
                 .findFirst().orElse(null);
+        boolean clockwise = !flags.contains("DIR:CCW");
+        com.boardgame.model.Card topCard = topCardToken.isEmpty()
+                ? null : com.boardgame.model.Card.fromToken(topCardToken);
+        com.boardgame.model.Card.Color activeColor = activeColorStr.isEmpty()
+                ? null : com.boardgame.model.Card.Color.valueOf(activeColorStr);
 
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(8, 8, 8, 8);
@@ -1383,9 +1590,27 @@ public final class HubClient extends JFrame {
         gbc.gridy = 0;
         gbc.gridwidth = 5;
 
-        // Players
-        JLabel playersLabel = styledLabel(formatUnoPlayers(playersStr), FONT_BODY, TEXT_SECONDARY);
-        board.add(playersLabel, gbc);
+        // Every player's card stack, in seat order, with direction indicator
+        JPanel seats = darkPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
+        seats.setOpaque(false);
+        seats.add(createUnoDirectionIndicator(clockwise));
+        if (!playersStr.isEmpty()) {
+            for (String p : playersStr.split(",")) {
+                String[] kv = p.split(":", 2);
+                if (kv.length == 2) {
+                    String name = Protocol.decode(kv[0]);
+                    int count;
+                    try {
+                        count = Integer.parseInt(kv[1]);
+                    } catch (NumberFormatException e) {
+                        continue;
+                    }
+                    seats.add(createUnoSeatPanel(name, count, name.equals(currentPlayer),
+                            name.equals(username)));
+                }
+            }
+        }
+        board.add(seats, gbc);
 
         // Pending stacked draw penalty
         if (stackFlag != null) {
@@ -1396,23 +1621,31 @@ public final class HubClient extends JFrame {
             board.add(stackLabel, gbc);
         }
 
-        // Top card
+        // Table center: draw pile next to the discard top card
         gbc.gridy++;
-        if (!topCardToken.isEmpty()) {
-            com.boardgame.model.Card topCard = com.boardgame.model.Card.fromToken(topCardToken);
-            JPanel cardPanel = createUnoCardPanel(topCard, activeColorStr, true);
-            board.add(cardPanel, gbc);
+        JPanel table = darkPanel(new FlowLayout(FlowLayout.CENTER, 24, 0));
+        table.setOpaque(false);
+        JPanel pilePanel = createUnoDrawPilePanel(drawPileSize, myTurn && !pendingDrawn);
+        table.add(pilePanel);
+        if (topCard != null) {
+            table.add(createUnoCardPanel(topCard, activeColorStr, true, false));
         }
+        board.add(table, gbc);
 
         // Action row: draw / keep / play drawn / call UNO
         gbc.gridy++;
         gbc.gridwidth = 1;
-        JComboBox<String> colorBox = styledComboBox(
-                new String[]{"RED", "YELLOW", "GREEN", "BLUE"});
         if (pendingDrawn) {
+            boolean drawnIsWild = !handStr.isEmpty() && com.boardgame.model.Card
+                    .fromToken(handStr.split(",")[handStr.split(",").length - 1])
+                    .color() == com.boardgame.model.Card.Color.WILD;
             JButton playDrawnBtn = accentButton("Play Drawn Card");
-            playDrawnBtn.addActionListener(e -> sendCommand(
-                    "MOVE|PLAYDRAWN|" + colorBox.getSelectedItem()));
+            playDrawnBtn.addActionListener(e -> {
+                String color = drawnIsWild ? promptWildColor() : "";
+                if (color != null) {
+                    sendCommand("MOVE|PLAYDRAWN|" + color);
+                }
+            });
             board.add(playDrawnBtn, gbc);
             gbc.gridx = 1;
             JButton keepBtn = accentButton("Keep It");
@@ -1437,10 +1670,7 @@ public final class HubClient extends JFrame {
             gbc.gridx++;
         }
 
-        // Wild color selector
-        board.add(colorBox, gbc);
-
-        // Hand
+        // Hand: playable cards glow and lift on hover
         gbc.gridy++;
         gbc.gridx = 0;
         gbc.gridwidth = 5;
@@ -1450,16 +1680,34 @@ public final class HubClient extends JFrame {
             for (int i = 0; i < cardTokens.length; i++) {
                 int idx = i;
                 com.boardgame.model.Card card = com.boardgame.model.Card.fromToken(cardTokens[i]);
-                JPanel cardP = createUnoCardPanel(card, null, false);
+                boolean playable = myTurn && topCard != null
+                        && isUnoCardPlayable(card, idx, cardTokens.length,
+                                topCard, activeColor, pendingDrawn, stackFlag != null);
+                JPanel cardP = createUnoCardPanel(card, null, false, playable);
                 cardP.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
                 cardP.addMouseListener(new MouseAdapter() {
                     @Override
                     public void mouseClicked(MouseEvent e) {
                         if (myTurn) {
-                            String color = card.color() == com.boardgame.model.Card.Color.WILD
-                                    ? (String) colorBox.getSelectedItem() : "";
+                            String color = "";
+                            if (card.color() == com.boardgame.model.Card.Color.WILD) {
+                                color = promptWildColor();
+                                if (color == null) {
+                                    return;
+                                }
+                            }
                             sendCommand("MOVE|" + idx + "|" + color);
                         }
+                    }
+
+                    @Override
+                    public void mouseEntered(MouseEvent e) {
+                        cardP.putClientProperty("liftTarget", 12f);
+                    }
+
+                    @Override
+                    public void mouseExited(MouseEvent e) {
+                        cardP.putClientProperty("liftTarget", 0f);
                     }
                 });
                 handPanel.add(cardP);
@@ -1469,48 +1717,259 @@ public final class HubClient extends JFrame {
         scroll.setBackground(BG_DARK);
         scroll.getViewport().setBackground(BG_DARK);
         scroll.setBorder(BorderFactory.createEmptyBorder());
-        scroll.setPreferredSize(new Dimension(700, 150));
+        scroll.setPreferredSize(new Dimension(700, 165));
         board.add(scroll, gbc);
     }
 
-    private JPanel createUnoCardPanel(com.boardgame.model.Card card, String activeColor, boolean large) {
+    /** Client-side mirror of the server's playability rules, used for the card glow. */
+    private static boolean isUnoCardPlayable(com.boardgame.model.Card card, int idx, int handSize,
+                                             com.boardgame.model.Card topCard,
+                                             com.boardgame.model.Card.Color activeColor,
+                                             boolean pendingDrawn, boolean stackPending) {
+        if (pendingDrawn && idx != handSize - 1) {
+            return false;
+        }
+        if (stackPending) {
+            return card.value() == topCard.value()
+                    && (card.value() == com.boardgame.model.Card.Value.DRAW_TWO
+                    || card.value() == com.boardgame.model.Card.Value.WILD_DRAW_FOUR);
+        }
+        return card.matches(topCard, activeColor);
+    }
+
+    /** A player's seat: fanned face-down card stack, name, count, turn glow, UNO badge. */
+    private JPanel createUnoSeatPanel(String name, int count, boolean isTurn, boolean isMe) {
+        JPanel seat = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                float pulse = 0.5f + 0.5f * (float) Math.sin(boardAnimPhase * 2);
+                // Pulsing golden ring when it is this player's turn
+                if (isTurn) {
+                    for (int i = 3; i >= 1; i--) {
+                        g2.setColor(new Color(255, 200, 0, (int) (20 + pulse * 25)));
+                        g2.setStroke(new BasicStroke(i * 2f));
+                        g2.drawRoundRect(i, i, getWidth() - 1 - 2 * i,
+                                getHeight() - 1 - 2 * i, 18, 18);
+                    }
+                    g2.setColor(new Color(255, 200, 0, (int) (140 + pulse * 115)));
+                    g2.setStroke(new BasicStroke(2.5f));
+                    g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 18, 18);
+                }
+                g2.setColor(isTurn ? new Color(0x3A, 0x36, 0x2A) : BG_INPUT);
+                g2.fillRoundRect(4, 4, getWidth() - 8, getHeight() - 8, 14, 14);
+                // Fanned face-down stack (bobbing gently on the current turn)
+                int shown = Math.max(1, Math.min(count, 7));
+                int cw = 26;
+                int chh = 38;
+                int span = (shown - 1) * 10;
+                int startX = (getWidth() - cw - span) / 2;
+                int baseY = 12 + (isTurn ? (int) (Math.sin(boardAnimPhase * 2) * 2) : 0);
+                for (int i = 0; i < shown; i++) {
+                    double rot = Math.toRadians((i - (shown - 1) / 2.0) * 7);
+                    int cx = startX + i * 10;
+                    g2.rotate(rot, cx + cw / 2.0, baseY + chh);
+                    paintUnoCardBack(g2, cx, baseY, cw, chh);
+                    g2.rotate(-rot, cx + cw / 2.0, baseY + chh);
+                }
+                // Name + count
+                g2.setFont(FONT_SMALL.deriveFont(Font.BOLD));
+                g2.setColor(isMe ? ACCENT_HOVER : TEXT_PRIMARY);
+                String label = (isMe ? "\u2B50 " : "") + name;
+                FontMetrics fm = g2.getFontMetrics();
+                g2.drawString(label, (getWidth() - fm.stringWidth(label)) / 2, getHeight() - 22);
+                g2.setColor(TEXT_SECONDARY);
+                String cards = count + (count == 1 ? " card" : " cards");
+                g2.drawString(cards, (getWidth() - fm.stringWidth(cards)) / 2, getHeight() - 9);
+                // Pulsing UNO! badge at one card
+                if (count == 1) {
+                    g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+                    String unoTxt = "UNO!";
+                    FontMetrics ufm = g2.getFontMetrics();
+                    int bw = ufm.stringWidth(unoTxt) + 10;
+                    int bx = getWidth() - bw - 6;
+                    g2.setColor(new Color(0xD3, 0x2F, 0x2F, (int) (170 + pulse * 85)));
+                    g2.fillRoundRect(bx, 6, bw, 16, 10, 10);
+                    g2.setColor(Color.WHITE);
+                    g2.drawString(unoTxt, bx + 5, 18);
+                }
+                g2.dispose();
+            }
+        };
+        seat.setOpaque(false);
+        seat.setPreferredSize(new Dimension(118, 104));
+        seat.setToolTipText(name + " holds " + count + (count == 1 ? " card" : " cards"));
+        return seat;
+    }
+
+    /** Spinning circular arrow showing the direction of play. */
+    private JPanel createUnoDirectionIndicator(boolean clockwise) {
+        JPanel indicator = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                int cx = getWidth() / 2;
+                int cy = getHeight() / 2 - 8;
+                int r = 16;
+                double spin = boardAnimPhase * (clockwise ? 1 : -1);
+                g2.setColor(ACCENT);
+                g2.setStroke(new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g2.rotate(spin, cx, cy);
+                g2.drawArc(cx - r, cy - r, 2 * r, 2 * r, 20, 140);
+                g2.drawArc(cx - r, cy - r, 2 * r, 2 * r, 200, 140);
+                // Arrowheads
+                for (int a : new int[]{20, 200}) {
+                    double rad = Math.toRadians(-a);
+                    int ax = cx + (int) (r * Math.cos(rad));
+                    int ay = cy + (int) (r * Math.sin(rad));
+                    int dir = clockwise ? 1 : -1;
+                    g2.fillPolygon(new int[]{ax - 5 * dir, ax + 5 * dir, ax},
+                            new int[]{ay - 2, ay - 2, ay + 7}, 3);
+                }
+                g2.rotate(-spin, cx, cy);
+                g2.setFont(FONT_SMALL);
+                g2.setColor(TEXT_SECONDARY);
+                String lbl = clockwise ? "clockwise" : "reversed!";
+                FontMetrics fm = g2.getFontMetrics();
+                g2.drawString(lbl, (getWidth() - fm.stringWidth(lbl)) / 2, getHeight() - 6);
+                g2.dispose();
+            }
+        };
+        indicator.setOpaque(false);
+        indicator.setPreferredSize(new Dimension(72, 104));
+        indicator.setToolTipText("Direction of play");
+        return indicator;
+    }
+
+    /** The draw pile: a stack of card backs with the remaining count; click to draw. */
+    private JPanel createUnoDrawPilePanel(int drawPileSize, boolean canDraw) {
+        JPanel pile = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                int layers = Math.max(1, Math.min(drawPileSize, 4));
+                int cw = getWidth() - 14;
+                int chh = getHeight() - 34;
+                for (int i = layers - 1; i >= 0; i--) {
+                    paintUnoCardBack(g2, 4 + i * 3, 4 + i * 3, cw, chh);
+                }
+                if (canDraw) {
+                    float pulse = 0.5f + 0.5f * (float) Math.sin(boardAnimPhase * 2);
+                    g2.setColor(new Color(255, 255, 255, (int) (60 + pulse * 90)));
+                    g2.setStroke(new BasicStroke(2.5f));
+                    g2.drawRoundRect(4, 4, cw, chh, 14, 14);
+                }
+                g2.setFont(FONT_SMALL);
+                g2.setColor(TEXT_SECONDARY);
+                String label = drawPileSize + " left" + (canDraw ? " \u2014 click to draw" : "");
+                FontMetrics fm = g2.getFontMetrics();
+                g2.drawString(label, (getWidth() - fm.stringWidth(label)) / 2, getHeight() - 6);
+                g2.dispose();
+            }
+        };
+        pile.setOpaque(false);
+        pile.setPreferredSize(new Dimension(110, 172));
+        pile.setToolTipText("Draw pile");
+        if (canDraw) {
+            pile.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            pile.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    sendCommand("MOVE|DRAW");
+                }
+            });
+        }
+        return pile;
+    }
+
+    /** Paints a single face-down UNO card back. */
+    private static void paintUnoCardBack(Graphics2D g2, int x, int y, int w, int h) {
+        g2.setColor(new Color(0, 0, 0, 60));
+        g2.fillRoundRect(x + 2, y + 2, w, h, 12, 12);
+        g2.setPaint(new GradientPaint(x, y, new Color(0x1A, 0x1A, 0x2E),
+                x, y + h, new Color(0x0F, 0x0F, 0x1E)));
+        g2.fillRoundRect(x, y, w, h, 12, 12);
+        g2.setColor(new Color(0xD3, 0x2F, 0x2F));
+        g2.fillOval(x + w / 6, y + h / 4, w * 2 / 3, h / 2);
+        g2.setColor(Color.WHITE);
+        g2.setFont(new Font("SansSerif", Font.BOLD, Math.max(8, h / 5)));
+        FontMetrics fm = g2.getFontMetrics();
+        g2.drawString("UNO", x + (w - fm.stringWidth("UNO")) / 2,
+                y + (h + fm.getAscent() - fm.getDescent()) / 2);
+        g2.setColor(new Color(255, 255, 255, 90));
+        g2.drawRoundRect(x + 2, y + 2, w - 4, h - 4, 10, 10);
+    }
+
+    private JPanel createUnoCardPanel(com.boardgame.model.Card card, String activeColor,
+                                      boolean large, boolean playable) {
         int w = large ? 100 : 70;
         int h = large ? 150 : 105;
+        int headroom = large ? 0 : 14;
         JPanel panel = new JPanel() {
+            private float lift;
+
             @Override
             protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                Object targetProp = getClientProperty("liftTarget");
+                float target = targetProp instanceof Number n ? n.floatValue() : 0f;
+                lift += (target - lift) * 0.3f; // eased by the shared animation clock
+                g2.translate(0, headroom - lift);
                 Color cardColor = unoAwtColor(card.color());
                 if (card.color() == com.boardgame.model.Card.Color.WILD && activeColor != null && !activeColor.isEmpty()) {
                     cardColor = unoAwtColor(com.boardgame.model.Card.Color.valueOf(activeColor));
                 }
-                // Shadow
-                g2.setColor(new Color(0, 0, 0, 60));
-                g2.fillRoundRect(3, 3, getWidth() - 3, getHeight() - 3, 16, 16);
+                // Playable glow
+                if (playable) {
+                    float pulse = 0.5f + 0.5f * (float) Math.sin(boardAnimPhase * 2);
+                    g2.setColor(new Color(255, 255, 255, (int) (70 + pulse * 110)));
+                    g2.setStroke(new BasicStroke(3f));
+                    g2.drawRoundRect(-1, -1, getWidth() - 2, getHeight() - headroom - 2, 18, 18);
+                }
+                // Shadow (deepens as the card lifts)
+                g2.setColor(new Color(0, 0, 0, 60 + (int) (lift * 5)));
+                g2.fillRoundRect(3, 3 + (int) lift, getWidth() - 3, getHeight() - headroom - 3, 16, 16);
                 // Card body
-                g2.setColor(cardColor);
-                g2.fillRoundRect(0, 0, getWidth() - 4, getHeight() - 4, 16, 16);
+                g2.setColor(playable ? cardColor : dimmed(cardColor, playableDimming()));
+                g2.fillRoundRect(0, 0, getWidth() - 4, getHeight() - headroom - 4, 16, 16);
                 // White ellipse
                 g2.setColor(new Color(255, 255, 255, 100));
-                g2.fillOval(getWidth() / 6, getHeight() / 4, getWidth() * 2 / 3, getHeight() / 2);
+                g2.fillOval(getWidth() / 6, (getHeight() - headroom) / 4,
+                        getWidth() * 2 / 3, (getHeight() - headroom) / 2);
                 // Label
                 g2.setColor(Color.WHITE);
                 g2.setFont(new Font("SansSerif", Font.BOLD, large ? 22 : 16));
                 String label = card.value().label();
                 FontMetrics fm = g2.getFontMetrics();
                 int x = (getWidth() - 4 - fm.stringWidth(label)) / 2;
-                int y = (getHeight() - 4 + fm.getAscent() - fm.getDescent()) / 2;
+                int y = (getHeight() - headroom - 4 + fm.getAscent() - fm.getDescent()) / 2;
                 g2.drawString(label, x, y);
                 // Corner label
                 g2.setFont(new Font("SansSerif", Font.BOLD, large ? 12 : 9));
                 g2.drawString(label, 6, 16);
                 g2.dispose();
             }
+
+            private float playableDimming() {
+                return large ? 0f : 0.35f;
+            }
         };
-        panel.setPreferredSize(new Dimension(w, h));
+        panel.setPreferredSize(new Dimension(w, h + headroom));
         panel.setOpaque(false);
         return panel;
+    }
+
+    private static Color dimmed(Color c, float amount) {
+        return new Color((int) (c.getRed() * (1 - amount)),
+                (int) (c.getGreen() * (1 - amount)),
+                (int) (c.getBlue() * (1 - amount)));
     }
 
     private static Color unoAwtColor(com.boardgame.model.Card.Color color) {
@@ -1523,17 +1982,107 @@ public final class HubClient extends JFrame {
         };
     }
 
-    private String formatUnoPlayers(String encoded) {
-        if (encoded.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        for (String p : encoded.split(",")) {
-            String[] kv = p.split(":", 2);
-            if (kv.length == 2) {
-                if (sb.length() > 0) sb.append("   ");
-                sb.append(Protocol.decode(kv[0])).append(" (").append(kv[1]).append(")");
+    /**
+     * Modal color picker for wild cards: four big glossy swatches that light
+     * up on hover. Returns "RED"/"YELLOW"/"GREEN"/"BLUE", or null if dismissed.
+     */
+    private String promptWildColor() {
+        final String[] chosen = {null};
+        javax.swing.JDialog dialog = new javax.swing.JDialog(this, "Pick a color", true);
+        dialog.setUndecorated(true);
+        JPanel content = new JPanel(new BorderLayout(0, 8)) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(BG_CARD);
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 24, 24);
+                g2.setColor(ACCENT);
+                g2.setStroke(new BasicStroke(2f));
+                g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 24, 24);
+                g2.dispose();
             }
+        };
+        content.setOpaque(false);
+        content.setBorder(BorderFactory.createEmptyBorder(16, 16, 16, 16));
+        JLabel title = styledLabel("\uD83C\uDF08 Choose a color", FONT_HEADER, TEXT_PRIMARY);
+        title.setHorizontalAlignment(SwingConstants.CENTER);
+        content.add(title, BorderLayout.NORTH);
+
+        JPanel swatches = new JPanel(new GridLayout(2, 2, 10, 10));
+        swatches.setOpaque(false);
+        for (com.boardgame.model.Card.Color c : List.of(
+                com.boardgame.model.Card.Color.RED, com.boardgame.model.Card.Color.YELLOW,
+                com.boardgame.model.Card.Color.GREEN, com.boardgame.model.Card.Color.BLUE)) {
+            Color awt = unoAwtColor(c);
+            final boolean[] hover = {false};
+            JPanel swatch = new JPanel() {
+                @Override
+                protected void paintComponent(Graphics g) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                            RenderingHints.VALUE_ANTIALIAS_ON);
+                    int inset = hover[0] ? 0 : 4;
+                    g2.setColor(new Color(0, 0, 0, 70));
+                    g2.fillRoundRect(inset + 3, inset + 3, getWidth() - 2 * inset - 3,
+                            getHeight() - 2 * inset - 3, 18, 18);
+                    g2.setPaint(new GradientPaint(0, inset, awt.brighter(),
+                            0, getHeight() - inset, awt));
+                    g2.fillRoundRect(inset, inset, getWidth() - 2 * inset,
+                            getHeight() - 2 * inset, 18, 18);
+                    if (hover[0]) {
+                        g2.setColor(new Color(255, 255, 255, 200));
+                        g2.setStroke(new BasicStroke(3f));
+                        g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 18, 18);
+                    }
+                    g2.setColor(Color.WHITE);
+                    g2.setFont(FONT_BUTTON);
+                    FontMetrics fm = g2.getFontMetrics();
+                    g2.drawString(c.name(), (getWidth() - fm.stringWidth(c.name())) / 2,
+                            (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
+                    g2.dispose();
+                }
+            };
+            swatch.setOpaque(false);
+            swatch.setPreferredSize(new Dimension(110, 80));
+            swatch.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            swatch.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    chosen[0] = c.name();
+                    dialog.dispose();
+                }
+
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    hover[0] = true;
+                    swatch.repaint();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    hover[0] = false;
+                    swatch.repaint();
+                }
+            });
+            swatches.add(swatch);
         }
-        return sb.toString();
+        content.add(swatches, BorderLayout.CENTER);
+
+        JButton cancel = accentButton("Cancel");
+        cancel.addActionListener(e -> dialog.dispose());
+        JPanel cancelRow = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        cancelRow.setOpaque(false);
+        cancelRow.add(cancel);
+        content.add(cancelRow, BorderLayout.SOUTH);
+
+        dialog.setContentPane(content);
+        dialog.setBackground(new Color(0, 0, 0, 0));
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+        return chosen[0];
     }
 
     private void renderGeneric(JPanel board, String[] fields, boolean myTurn) {
